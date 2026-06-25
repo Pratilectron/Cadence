@@ -1,0 +1,10 @@
+node_modules/
+data/users.json
+data/uploads/
+data/uploads-manifest.json
+data/custom-emojis.json
+data/logs/
+data/rooms.json
+users.json
+.env
+.netlify/

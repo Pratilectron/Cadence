@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin — Cadence</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600&family=Syne:wght@400;600;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="/css/admin.css" />
+</head>
+<body class="admin-body">
+  <div class="ambient" aria-hidden="true">
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+    <div class="grain"></div>
+  </div>
+
+  <div class="admin-shell">
+    <aside class="admin-nav">
+      <div class="admin-brand">
+        <span class="brand-glyph">◉</span>
+        <div>
+          <p class="brand-name">Cadence Admin</p>
+          <p class="brand-tag" id="admin-user">Checking access…</p>
+        </div>
+      </div>
+      <nav class="admin-menu">
+        <button type="button" class="admin-link active" data-section="dashboard">Dashboard</button>
+        <button type="button" class="admin-link" data-section="users">Users</button>
+        <button type="button" class="admin-link" data-section="rooms">Rooms & Roles</button>
+        <button type="button" class="admin-link" data-section="storage">Storage</button>
+        <button type="button" class="admin-link" data-section="logs">Activity</button>
+        <button type="button" class="admin-link" data-section="settings">Settings</button>
+        <button type="button" class="admin-link" data-section="security">Security</button>
+      </nav>
+      <a href="/" class="link-btn admin-back">← Back to chat</a>
+    </aside>
+
+    <main class="admin-main">
+      <section class="admin-section active" id="sec-dashboard">
+        <header class="admin-head"><h1>Dashboard</h1><p>System overview</p></header>
+        <div class="stat-grid" id="stats-grid"></div>
+      </section>
+
+      <section class="admin-section" id="sec-users">
+        <header class="admin-head"><h1>Users</h1><p>Accounts and super admin flags</p></header>
+        <div class="admin-table-wrap scrollbar" id="users-table"></div>
+      </section>
+
+      <section class="admin-section" id="sec-rooms">
+        <header class="admin-head"><h1>Rooms & Roles</h1><p>Channels and role counts</p></header>
+        <div class="admin-table-wrap scrollbar" id="rooms-table"></div>
+      </section>
+
+      <section class="admin-section" id="sec-storage">
+        <header class="admin-head"><h1>Storage</h1><p>Uploaded files</p></header>
+        <div class="admin-table-wrap scrollbar" id="files-table"></div>
+      </section>
+
+      <section class="admin-section" id="sec-logs">
+        <header class="admin-head"><h1>Activity log</h1><p>Recent events</p></header>
+        <div class="admin-table-wrap scrollbar" id="logs-table"></div>
+      </section>
+
+      <section class="admin-section" id="sec-settings">
+        <header class="admin-head"><h1>Settings</h1><p>Runtime config (env vars override locked fields)</p></header>
+        <form class="settings-form" id="settings-form"></form>
+      </section>
+
+      <section class="admin-section" id="sec-security">
+        <header class="admin-head"><h1>Security</h1><p>Sessions and access</p></header>
+        <div class="security-panel">
+          <p class="whisper">Revoke all active sessions — users must sign in again.</p>
+          <button type="button" class="pill-btn pill-accent" id="revoke-sessions">Revoke all sessions</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast-stack" id="toast-stack"></div>
+  <script type="module" src="/js/admin.js"></script>
+</body>
+</html>

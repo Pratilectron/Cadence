@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Cadence — quiet rooms, loud ideas" />
+  <meta name="theme-color" content="#0a0908" />
+  <title>Cadence</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&family=Syne:wght@400;600;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <div class="ambient" aria-hidden="true">
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+    <div class="orb orb-c"></div>
+    <div class="grain"></div>
+  </div>
+
+  <div class="app-shell">
+    <header class="masthead">
+      <div class="brand">
+        <span class="brand-glyph">◉</span>
+        <div>
+          <p class="brand-name">Cadence</p>
+          <p class="brand-tag">live conversation</p>
+        </div>
+      </div>
+      <div class="masthead-end">
+        <span class="live-tag" id="status-pill">
+          <span class="live-dot" id="status-dot"></span>
+          <span id="status-text">Connecting</span>
+        </span>
+        <button type="button" class="link-btn" id="logout-btn" hidden>Leave</button>
+        <a href="/admin.html" class="link-btn" id="admin-link" hidden>Admin</a>
+      </div>
+    </header>
+
+    <main class="stage">
+      <aside class="folio folio-rooms" id="sidebar-rooms">
+        <div class="folio-head">
+          <span class="folio-label">Rooms</span>
+        </div>
+        <form class="micro-form" id="create-room-form">
+          <input id="room-name" placeholder="New room…" maxlength="64" autocomplete="off" aria-label="Room name" />
+          <div class="micro-row">
+            <select id="room-type" aria-label="Room type">
+              <option value="public">Open</option>
+              <option value="private">Private</option>
+              <option value="locked">Locked</option>
+            </select>
+            <button type="submit" class="pill-btn">+</button>
+          </div>
+        </form>
+        <div class="folio-scroll scrollbar" id="room-list" role="list"></div>
+      </aside>
+
+      <section class="folio folio-chat">
+        <header class="chat-stage-head">
+          <div>
+            <p class="stage-kicker" id="room-type-label">Public</p>
+            <h1 class="stage-title" id="active-room">General</h1>
+          </div>
+          <p class="stage-you" id="me-name">Guest</p>
+        </header>
+        <div class="chat-stream scrollbar" id="messages" role="log" aria-live="polite" aria-relevant="additions"></div>
+        <div class="compose-toolbar">
+          <button type="button" class="tool-btn" id="attach-btn" title="Attach file">📎</button>
+          <button type="button" class="tool-btn" id="record-btn" title="Screen record">⏺</button>
+          <button type="button" class="tool-btn" id="emoji-btn" title="Emoji & GIF">☺</button>
+          <span class="storage-hint" id="storage-hint"></span>
+        </div>
+        <form class="compose-line" id="chat-form">
+          <span class="compose-mark">→</span>
+          <input id="chat-input" maxlength="2000" autocomplete="off" placeholder="Say something worth keeping…" aria-label="Message" />
+          <button type="submit" class="pill-btn pill-accent">Send</button>
+        </form>
+        <input type="file" id="file-input" hidden accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.csv,.zip,.rar,.7z" multiple />
+        <div class="picker" id="picker" hidden>
+          <div class="picker-tabs">
+            <button type="button" class="picker-tab active" data-tab="emoji">Emoji</button>
+            <button type="button" class="picker-tab" data-tab="gif">GIF</button>
+            <button type="button" class="picker-tab" data-tab="custom">Custom</button>
+          </div>
+          <div class="picker-panel active" id="picker-emoji"></div>
+          <div class="picker-panel" id="picker-gif"></div>
+          <div class="picker-panel" id="picker-custom">
+            <button type="button" class="pill-btn pill-wide" id="upload-emoji-btn">Upload emoji / GIF</button>
+            <input type="file" id="custom-emoji-input" hidden accept="image/*,.gif" />
+          </div>
+        </div>
+      </section>
+
+      <aside class="folio folio-side" id="sidebar-people">
+        <div class="folio-head">
+          <span class="folio-label">Here</span>
+        </div>
+        <div class="folio-scroll scrollbar people-scroll" id="user-list" role="list"></div>
+        <div class="folio-block">
+          <span class="folio-label">Pinned</span>
+          <div class="folio-scroll scrollbar pin-scroll" id="pinned-list"></div>
+        </div>
+        <div class="folio-block roles-zone">
+          <span class="folio-label">Roles</span>
+          <div id="roles-panel"></div>
+        </div>
+        <div class="folio-block invite-zone">
+          <span class="folio-label">Invite</span>
+          <form class="micro-form" id="invite-form">
+            <div class="micro-row">
+              <input id="invite-username" placeholder="Username" maxlength="32" autocomplete="off" aria-label="Invite username" />
+              <button type="submit" class="pill-btn">→</button>
+            </div>
+          </form>
+          <p class="whisper" id="invite-note"></p>
+        </div>
+        <div class="folio-block activity-zone">
+          <span class="folio-label">Activity</span>
+          <div class="folio-scroll scrollbar activity-scroll" id="activity-log"></div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <dialog class="gate" id="auth-dialog" aria-labelledby="auth-title">
+    <div class="gate-sheet">
+      <button type="button" class="link-btn gate-switch" id="auth-mode-button">Create account</button>
+      <p class="gate-kicker">Cadence</p>
+      <h2 id="auth-title">Sign in</h2>
+      <p class="gate-copy">Private rooms, pins, invites — one quiet login.</p>
+      <form class="gate-form" id="auth-form">
+        <label>
+          <span>Username</span>
+          <input id="auth-username" maxlength="32" autocomplete="username" required />
+        </label>
+        <label>
+          <span>Password</span>
+          <input id="auth-password" type="password" minlength="8" autocomplete="current-password" required />
+        </label>
+        <button type="submit" class="pill-btn pill-accent pill-wide" id="auth-submit">Sign in</button>
+        <p class="form-error" id="auth-error" role="alert"></p>
+      </form>
+    </div>
+  </dialog>
+
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+
+  <script src="/socket.io/socket.io.min.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
