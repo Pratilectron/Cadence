@@ -29,6 +29,7 @@ const {
 const { getConfig, reloadConfig, isSuperAdminUsername } = require('./lib/config');
 const adminLib = require('./lib/admin');
 const { handleAdminApi } = require('./lib/admin-api');
+const { buildProfile, updateProfile } = require('./lib/profile');
 
 function cfg() {
   return getConfig();
@@ -325,6 +326,71 @@ async function handleHttp(req, res) {
     return;
   }
 
+  if (urlPath === '/api/profile' && req.method === 'GET') {
+    const sessionUser = getSessionUser(getTokenFromReq(req));
+    if (!sessionUser) {
+      jsonResponse(res, 401, { error: 'Authentication required.' });
+      return;
+    }
+    const record = findUserById(sessionUser.id);
+    if (!record) {
+      jsonResponse(res, 404, { error: 'User not found.' });
+      return;
+    }
+    jsonResponse(res, 200, { profile: buildProfile(record) });
+    return;
+  }
+
+  if (urlPath === '/api/profile' && req.method === 'PATCH') {
+    const sessionUser = getSessionUser(getTokenFromReq(req));
+    if (!sessionUser) {
+      jsonResponse(res, 401, { error: 'Authentication required.' });
+      return;
+    }
+    try {
+      const body = await readJsonBody(req);
+      const profile = updateProfile(usersDb, saveUsersDb, sessionUser.id, body);
+      jsonResponse(res, 200, { profile });
+    } catch (err) {
+      jsonResponse(res, 400, { error: err.message || 'Update failed.' });
+    }
+    return;
+  }
+
+  if (urlPath === '/api/profile/password' && req.method === 'PATCH') {
+    const sessionUser = getSessionUser(getTokenFromReq(req));
+    if (!sessionUser) {
+      jsonResponse(res, 401, { error: 'Authentication required.' });
+      return;
+    }
+    try {
+      const body = await readJsonBody(req);
+      const user = findUserById(sessionUser.id);
+      if (!user) {
+        jsonResponse(res, 404, { error: 'User not found.' });
+        return;
+      }
+      if (!verifyPassword(String(body.currentPassword || ''), user)) {
+        jsonResponse(res, 400, { error: 'Current password is incorrect.' });
+        return;
+      }
+      const next = String(body.newPassword || '');
+      if (next.length < 8) {
+        jsonResponse(res, 400, { error: 'New password must be at least 8 characters.' });
+        return;
+      }
+      const upgraded = hashPasswordScrypt(next);
+      user.algo = upgraded.algo;
+      user.salt = upgraded.salt;
+      user.passwordHash = upgraded.passwordHash;
+      saveUsersDb();
+      jsonResponse(res, 200, { ok: true });
+    } catch (err) {
+      jsonResponse(res, 400, { error: err.message || 'Password change failed.' });
+    }
+    return;
+  }
+
   if (urlPath === '/api/upload' && req.method === 'POST') {
     const user = getSessionUser(getTokenFromReq(req));
     if (!user) {
@@ -544,11 +610,14 @@ function requirePerm(socket, roomName, perm) {
 }
 
 function authPayload(user, token) {
+  const record = user.username ? findUserByUsername(user.username) || findUserById(user.id) : findUserById(user.id);
+  const source = record || user;
   return {
-    id: user.id,
-    username: user.username,
+    id: source.id,
+    username: source.username,
+    displayName: source.displayName || '',
     token,
-    isSuperAdmin: isSuperAdmin(user),
+    isSuperAdmin: isSuperAdmin(source),
   };
 }
 
