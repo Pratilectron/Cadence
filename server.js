@@ -30,6 +30,11 @@ const { getConfig, reloadConfig, isSuperAdminUsername } = require('./lib/config'
 const adminLib = require('./lib/admin');
 const { handleAdminApi } = require('./lib/admin-api');
 const { buildProfile, updateProfile } = require('./lib/profile');
+const { parseRequestUrl } = require('./lib/request-url');
+const { setupProcessHandlers, startHttpServer } = require('./lib/bootstrap');
+const { handleDeployWebhook } = require('./lib/deploy');
+
+const PORT = Number(process.env.PORT) || 3000;
 
 function cfg() {
   return getConfig();
@@ -59,6 +64,21 @@ const SECURITY_HEADERS = {
   'Content-Security-Policy':
     "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss: https://cdn.jsdelivr.net; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
 };
+
+const SENSITIVE_PATH_PATTERNS = [
+  /^\/\.env/i,
+  /^\/data\//i,
+  /^\/users\.json$/i,
+  /^\/package\.json$/i,
+  /^\/package-lock\.json$/i,
+  /^\/node_modules\//i,
+];
+
+function isSensitivePath(urlPath) {
+  const pathOnly = urlPath.split('?')[0].replace(/\\/g, '/');
+  if (pathOnly.includes('..')) return true;
+  return SENSITIVE_PATH_PATTERNS.some((re) => re.test(pathOnly));
+}
 
 mkdirSync(DATA_DIR, { recursive: true });
 migrateLegacyDb();
@@ -247,6 +267,11 @@ function activityLog(event, socket, meta = {}) {
 
 function serveStatic(req, res) {
   const urlPath = req.url.split('?')[0];
+  if (isSensitivePath(urlPath)) {
+    res.writeHead(404, SECURITY_HEADERS);
+    res.end('Not Found');
+    return;
+  }
   const safePath = normalize(urlPath).replace(/^(\.\.[/\\])+/, '');
   let filePath = join(PUBLIC_DIR, safePath === '/' ? 'index.html' : safePath);
 
@@ -282,6 +307,12 @@ function serveStatic(req, res) {
 async function handleHttp(req, res) {
   const urlPath = req.url.split('?')[0];
 
+  if (isSensitivePath(urlPath)) {
+    res.writeHead(404, SECURITY_HEADERS);
+    res.end('Not Found');
+    return;
+  }
+
   if (urlPath.startsWith('/api/admin/')) {
     const handled = await handleAdminApi(req, res, urlPath, {
       jsonResponse,
@@ -313,6 +344,20 @@ async function handleHttp(req, res) {
     return;
   }
 
+  if (urlPath === '/api/health' && req.method === 'GET') {
+    jsonResponse(res, 200, {
+      ok: true,
+      app: cfg().appName,
+      uptime: process.uptime(),
+    });
+    return;
+  }
+
+  if (urlPath === '/api/deploy/webhook') {
+    await handleDeployWebhook(req, res, jsonResponse);
+    return;
+  }
+
   if (urlPath === '/api/storage' && req.method === 'GET') {
     jsonResponse(res, 200, getStorageStats());
     return;
@@ -324,7 +369,7 @@ async function handleHttp(req, res) {
   }
 
   if (urlPath === '/api/logs' && req.method === 'GET') {
-    const params = new URL(req.url, `http://localhost:${cfg().port}`).searchParams;
+    const params = parseRequestUrl(req, PORT).searchParams;
     const room = params.get('room') || null;
     const limit = Math.min(Number(params.get('limit')) || 80, 200);
     jsonResponse(res, 200, { logs: readActivity({ room, limit }) });
@@ -402,7 +447,7 @@ async function handleHttp(req, res) {
       jsonResponse(res, 401, { error: 'Authentication required.' });
       return;
     }
-    const tag = new URL(req.url, `http://localhost:${cfg().port}`).searchParams.get('tag') || 'file';
+    const tag = parseRequestUrl(req, PORT).searchParams.get('tag') || 'file';
     try {
       const file = await parseUpload(req, { userId: user.id, username: user.username, tag });
       logActivity({
@@ -1136,8 +1181,30 @@ io.on('connection', (socket) => {
   });
 });
 
-httpServer.listen(cfg().port, () => {
+function logStartup(mode) {
   reloadConfig();
-  console.log(`${cfg().appName} running at http://localhost:${cfg().port}`);
-  console.log(`Admin panel: http://localhost:${cfg().port}/admin.html`);
-});
+  const appCfg = cfg();
+  const base = appCfg.publicUrl
+    || (mode === 'passenger'
+      ? '(set PUBLIC_URL for display)'
+      : `http://localhost:${PORT}`);
+  console.log(`[${appCfg.appName}] started (${process.env.NODE_ENV || 'development'}, ${mode})`);
+  console.log(`[${appCfg.appName}] listening on port ${PORT}`);
+  console.log(`[${appCfg.appName}] URL: ${base}`);
+  console.log(`[${appCfg.appName}] admin: ${base === '(set PUBLIC_URL for display)' ? '/admin.html' : `${base}/admin.html`}`);
+}
+
+function startServer() {
+  const { mode } = startHttpServer(httpServer, {
+    port: PORT,
+    onReady: () => logStartup(mode),
+  });
+}
+
+setupProcessHandlers({ httpServer, io, appName: cfg().appName });
+module.exports = httpServer;
+
+const shouldAutoStart = require.main === module || Boolean(process.env.PASSENGER_APP_ENV);
+if (shouldAutoStart) {
+  startServer();
+}

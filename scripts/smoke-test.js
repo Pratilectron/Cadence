@@ -1,8 +1,10 @@
 const { join } = require('path');
 const { io } = require(join(__dirname, '..', 'node_modules/socket.io/client-dist/socket.io.js'));
 
+const BASE_URL = process.env.TEST_URL || `http://127.0.0.1:${process.env.PORT || 3000}`;
+
 function client() {
-  return io('http://localhost:3000', { transports: ['websocket'] });
+  return io(BASE_URL, { transports: ['websocket'] });
 }
 
 function once(socket, event, timeout = 8000) {
@@ -54,7 +56,7 @@ async function run() {
     const boundary = '----testboundary';
     const body = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="test.txt"\r\nContent-Type: text/plain\r\n\r\nhello file\r\n--${boundary}--\r\n`;
 
-    const res = await fetch('http://localhost:3000/api/upload', {
+    const res = await fetch(`${BASE_URL}/api/upload`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${auth.token}`,
@@ -76,13 +78,13 @@ async function run() {
   }
 
   {
-    const res = await fetch('http://localhost:3000/api/logs?room=General&limit=5');
+    const res = await fetch(`${BASE_URL}/api/logs?room=General&limit=5`);
     const data = await res.json();
     results.push(['activity logs', Array.isArray(data.logs) && data.logs.length > 0]);
   }
 
   {
-    const res = await fetch('http://localhost:3000/api/storage');
+    const res = await fetch(`${BASE_URL}/api/storage`);
     const data = await res.json();
     results.push(['storage stats', data.maxBytes === 20 * 1024 ** 3]);
   }

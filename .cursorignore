@@ -1,0 +1,11 @@
+﻿# Keep secrets and runtime data out of AI context
+.env
+.env.*
+!.env.example
+data/
+users.json
+*.pem
+*.key
+secrets/
+credentials.json
+credentials.*.json

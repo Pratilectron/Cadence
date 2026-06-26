@@ -1,10 +1,27 @@
+# Dependencies
 node_modules/
-data/users.json
-data/uploads/
-data/uploads-manifest.json
-data/custom-emojis.json
-data/logs/
-data/rooms.json
-users.json
+
+# Secrets & environment (never commit)
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials.json
+credentials.*.json
+
+# Runtime data (users, uploads, logs, local settings)
+data/*
+!data/.gitkeep
+users.json
+
+# Hosting / tooling
 .netlify/
+tmp/
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*

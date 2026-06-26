@@ -28,6 +28,14 @@ Configure super admins in `.env`:
 SUPER_ADMIN_USERNAMES=you@example.com
 ```
 
+**Never commit `.env`** — it is gitignored. Copy from `.env.example` only. Run `npm run check-secrets` before pushing to catch accidental staging.
+
+Optional: enable the bundled pre-commit hook (one-time, per clone):
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## Scripts
 
 | Command | Description |
@@ -35,6 +43,91 @@ SUPER_ADMIN_USERNAMES=you@example.com
 | `npm start` | Run the server |
 | `npm run dev` | Run with file watch |
 | `npm test` | Smoke tests |
+| `npm run check-secrets` | Block commits of `.env`, `data/`, keys |
+| `npm run deploy` | Pull latest code, install deps, restart (server) |
+
+## Automated updates
+
+Cadence can auto-deploy when you push to `main`.
+
+### Option A — GitHub Actions (recommended)
+
+1. On the **server**, set in DirectAdmin env vars:
+   - `DEPLOY_WEBHOOK_SECRET` — long random string
+2. In **GitHub** → repo → Settings → Secrets and variables → Actions, add:
+   - `DEPLOY_WEBHOOK_URL` — `https://yourdomain.com/api/deploy/webhook`
+   - `DEPLOY_WEBHOOK_SECRET` — same value as on the server
+3. Push to `main`. CI runs tests, then the Deploy workflow calls your webhook.
+
+### Option B — GitHub repository webhook
+
+1. Set `DEPLOY_WEBHOOK_SECRET` on the server.
+2. GitHub → Settings → Webhooks → Add webhook:
+   - **Payload URL:** `https://yourdomain.com/api/deploy/webhook`
+   - **Content type:** `application/json`
+   - **Secret:** same as `DEPLOY_WEBHOOK_SECRET`
+   - **Events:** Just the push event
+3. Only pushes to `main` are applied (override with `DEPLOY_BRANCH`).
+
+### Option C — Cron polling (no webhook)
+
+On the server, add a cron job (every 5–15 minutes):
+
+```bash
+*/10 * * * * cd /path/to/cadence && bash scripts/poll-updates.sh
+```
+
+### Manual deploy on server
+
+```bash
+npm run deploy
+```
+
+This runs `git pull`, `npm install --omit=dev`, and touches `tmp/restart.txt` (Passenger reload).
+
+## Production (DirectAdmin / Passenger)
+
+Cadence runs as a plain Node.js HTTP server (no Express). It is compatible with DirectAdmin **Setup Node.js App** and Phusion Passenger.
+
+### Deploy workflow
+
+On the server after each push to `main`:
+
+```bash
+git pull origin main
+npm install
+npm start
+```
+
+Or restart the app from the DirectAdmin Node.js panel (recommended after deploy).
+
+### DirectAdmin panel settings
+
+| Setting | Value |
+|---------|--------|
+| Application root | Project directory (contains `server.js`) |
+| Application startup file | `server.js` |
+| Application mode | Production |
+
+### Required environment variables (hosting panel)
+
+Set these in DirectAdmin → **Setup Node.js App** → **Environment variables** (not in Git):
+
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| `PUBLIC_URL` | `https://yourdomain.com` | CORS origins + startup logs |
+| `ALLOWED_ORIGINS` | `https://yourdomain.com` | Socket.IO CORS (must match your site) |
+| `SUPER_ADMIN_USERNAMES` | `you@example.com` | Admin panel access |
+| `NODE_ENV` | `production` | Recommended for production |
+
+`PORT` is assigned automatically by Passenger — do not hardcode it in code.
+
+### Notes
+
+- `.env` is optional locally via `dotenv`; production values should live in the hosting panel.
+- Persistent data (`data/users.json`, uploads, logs) stays on disk — ensure `data/` is writable.
+- Health check: `GET /api/health`
+- WebSockets (`/socket.io`) must be enabled on your web server (Apache `mod_proxy_wstunnel` or equivalent).
 
 ## Stack
 
