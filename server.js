@@ -1,5 +1,5 @@
 const { createServer } = require('http');
-const { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } = require('fs');
+const { readFileSync, existsSync, mkdirSync, statSync } = require('fs');
 const { join, extname, normalize } = require('path');
 const crypto = require('crypto');
 const { Server } = require('socket.io');
@@ -27,6 +27,8 @@ const {
   isRoomOwner,
 } = require('./lib/roles');
 const { getConfig, reloadConfig, isSuperAdminUsername } = require('./lib/config');
+const { initUsersStore, loadUsersDb, saveUsersDb, usersDb } = require('./lib/users-store');
+const { DB_FILE } = require('./lib/db');
 const adminLib = require('./lib/admin');
 const { handleAdminApi } = require('./lib/admin-api');
 const { buildProfile, updateProfile } = require('./lib/profile');
@@ -42,8 +44,6 @@ function cfg() {
 
 const PUBLIC_DIR = join(__dirname, 'public');
 const DATA_DIR = join(__dirname, 'data');
-const DB_PATH = join(DATA_DIR, 'users.json');
-const LEGACY_DB_PATH = join(__dirname, 'users.json');
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -68,7 +68,8 @@ const SECURITY_HEADERS = {
 const SENSITIVE_PATH_PATTERNS = [
   /^\/\.env/i,
   /^\/data\//i,
-  /^\/users\.json$/i,
+  /^\/cadence\.db$/i,
+  /^\/.*\.db$/i,
   /^\/package\.json$/i,
   /^\/package-lock\.json$/i,
   /^\/node_modules\//i,
@@ -81,9 +82,8 @@ function isSensitivePath(urlPath) {
 }
 
 mkdirSync(DATA_DIR, { recursive: true });
-migrateLegacyDb();
+initUsersStore();
 
-const usersDb = loadUsersDb();
 const sessions = new Map();
 const rateLimits = new Map();
 
@@ -107,32 +107,6 @@ function createRoom(name, type, ownerId = null) {
   };
   initRoomRoles(room, type);
   return room;
-}
-
-function migrateLegacyDb() {
-  if (existsSync(DB_PATH) || !existsSync(LEGACY_DB_PATH)) return;
-  writeFileSync(DB_PATH, readFileSync(LEGACY_DB_PATH, 'utf8'), 'utf8');
-}
-
-function loadUsersDb() {
-  if (!existsSync(DB_PATH)) return { users: [] };
-  try {
-    const raw = readFileSync(DB_PATH, 'utf8');
-    return raw ? JSON.parse(raw) : { users: [] };
-  } catch (error) {
-    console.error('Failed to read users database:', error.message);
-    return { users: [] };
-  }
-}
-
-let savePending = false;
-function saveUsersDb() {
-  if (savePending) return;
-  savePending = true;
-  setImmediate(() => {
-    savePending = false;
-    writeFileSync(DB_PATH, JSON.stringify(usersDb, null, 2), 'utf8');
-  });
 }
 
 function hashPasswordScrypt(password) {
@@ -326,7 +300,7 @@ async function handleHttp(req, res) {
       rooms,
       sessions,
       rateLimits,
-      dbPath: DB_PATH,
+      dbPath: DB_FILE,
       findUserById,
       verifyPassword,
       resetPlatformState,

@@ -125,7 +125,7 @@ Set these in DirectAdmin → **Setup Node.js App** → **Environment variables**
 ### Notes
 
 - `.env` is optional locally via `dotenv`; production values should live in the hosting panel.
-- Persistent data (`data/users.json`, uploads, logs) stays on disk — ensure `data/` is writable.
+- Persistent data lives in **`data/cadence.db`** (SQLite) plus upload files — ensure `data/` is writable.
 - Health check: `GET /api/health`
 - WebSockets (`/socket.io`) must be enabled on your web server (Apache `mod_proxy_wstunnel` or equivalent).
 

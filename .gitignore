@@ -13,9 +13,12 @@ secrets/
 credentials.json
 credentials.*.json
 
-# Runtime data (users, uploads, logs, local settings)
+# Runtime data (users, uploads, logs, local settings, SQLite)
 data/*
 !data/.gitkeep
+*.db
+*.db-wal
+*.db-shm
 users.json
 
 # Hosting / tooling

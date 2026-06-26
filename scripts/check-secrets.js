@@ -9,6 +9,7 @@ const BLOCKED_PATTERNS = [
   /^\.env$/,
   /^\.env\./,
   /^data\//,
+  /\.db$/i,
   /^users\.json$/,
   /^secrets\//,
   /\.pem$/,
