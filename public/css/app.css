@@ -128,8 +128,10 @@ button {
 }
 
 .brand-glyph {
-  font-size: 1.4rem;
-  color: var(--gold);
+  display: block;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
   animation: breathe 4s ease-in-out infinite;
 }
 
