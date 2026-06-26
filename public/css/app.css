@@ -294,6 +294,7 @@ button {
   color: inherit;
   cursor: pointer;
   text-align: left;
+  transition: background 0.2s ease;
 }
 
 .side-head:hover {
@@ -303,7 +304,7 @@ button {
 .side-chevron {
   font-size: 0.75rem;
   color: var(--muted);
-  transition: transform 0.2s ease;
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .side-section.is-collapsed .side-chevron {
@@ -388,6 +389,9 @@ button {
 .folio-chat {
   background: rgba(14, 12, 10, 0.55);
   border-color: rgba(212, 165, 116, 0.12);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .chat-stage-head {
@@ -560,6 +564,15 @@ select {
   border-color: var(--gold);
 }
 
+.pill-btn:active {
+  transform: scale(0.97);
+}
+
+:focus-visible {
+  outline: 2px solid rgba(212, 165, 116, 0.65);
+  outline-offset: 3px;
+}
+
 .pill-accent {
   background: var(--gold-soft);
   border-color: rgba(212, 165, 116, 0.35);
@@ -578,7 +591,7 @@ select {
   border-radius: var(--radius);
   border: 1px solid transparent;
   background: transparent;
-  transition: background 0.2s, border-color 0.2s;
+  transition: background 0.25s ease, border-color 0.25s ease, transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .room-item:hover {
@@ -588,6 +601,7 @@ select {
 .room-item.active {
   border-color: rgba(212, 165, 116, 0.35);
   background: var(--gold-soft);
+  transform: translateX(4px);
 }
 
 .room-item.locked {
@@ -1057,6 +1071,11 @@ select {
   background: rgba(255, 255, 255, 0.03);
   font-size: 1rem;
   line-height: 1;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.15s ease;
+}
+
+.tool-btn:active {
+  transform: scale(0.94);
 }
 
 .tool-btn:hover { border-color: var(--gold); }
@@ -1223,6 +1242,54 @@ select {
 .recorder-status { color: var(--muted); font-size: 0.86rem; margin-bottom: 12px; font-style: italic; }
 .recorder-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
+/* Mobile bottom navigation */
+.mobile-dock {
+  display: none;
+  align-items: stretch;
+  justify-content: space-around;
+  gap: 4px;
+  padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--line);
+  background: rgba(14, 12, 10, 0.94);
+  backdrop-filter: blur(16px);
+  z-index: 25;
+}
+
+.dock-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 6px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  color: var(--muted);
+  transition: color 0.25s ease, background 0.25s ease, border-color 0.25s ease, transform 0.2s ease;
+}
+
+.dock-btn .dock-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.dock-btn .dock-label {
+  font-family: var(--display);
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.dock-btn.active {
+  color: var(--gold);
+  background: var(--gold-soft);
+  border-color: rgba(212, 165, 116, 0.25);
+}
+
+.dock-btn:active {
+  transform: scale(0.96);
+}
+
 .system-msg {
   text-align: center;
   font-style: italic;
@@ -1231,37 +1298,185 @@ select {
   padding: 4px 0;
 }
 
-@media (max-width: 1080px) {
-  .stage {
-    grid-template-columns: 1fr;
-    overflow: auto;
-  }
-
+@media (max-width: 1100px) {
   body {
-    overflow: auto;
+    overflow: hidden;
   }
 
   .app-shell {
-    height: auto;
-    min-height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
+    padding: 12px 12px 0;
+    grid-template-rows: auto 1fr auto;
+    gap: 10px;
   }
 
-  .folio {
-    min-height: 260px;
+  .masthead {
+    padding-bottom: 8px;
+  }
+
+  .brand-tag {
+    display: none;
+  }
+
+  .stage {
+    position: relative;
+    display: block;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .folio-rooms,
+  .folio-chat,
+  .folio-side {
+    position: absolute;
+    inset: 0;
+    min-height: 0;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(14px) scale(0.985);
+    transition:
+      opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+      transform 0.36s cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0.32s;
+  }
+
+  .folio-rooms.is-panel-active,
+  .folio-chat.is-panel-active,
+  .folio-side.is-panel-active {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: none;
+    z-index: 2;
+  }
+
+  .mobile-dock {
+    display: flex;
+  }
+
+  .chat-stage-head {
+    flex-wrap: wrap;
+    padding: 16px 16px 12px;
+    gap: 10px;
+  }
+
+  .stage-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .stage-title {
+    font-size: clamp(1.45rem, 5vw, 1.9rem);
+  }
+
+  .chat-stream {
+    padding: 16px;
+  }
+
+  .compose-toolbar,
+  .compose-line {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .compose-line {
+    gap: 8px;
+  }
+
+  .compose-line .pill-btn {
+    flex-shrink: 0;
+  }
+
+  .picker {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+    margin: 0;
+    z-index: 30;
+    max-height: min(42vh, 320px);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  }
+
+  .picker-panel {
+    max-height: min(28vh, 220px);
+  }
+
+  .toast-stack {
+    bottom: calc(82px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .profile-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 640px) {
   .app-shell {
-    padding: 12px;
+    padding: 10px 10px 0;
   }
 
-  .compose-line {
-    flex-wrap: wrap;
+  .masthead-end {
+    gap: 10px;
+  }
+
+  .live-tag {
+    font-size: 0.62rem;
+  }
+
+  .link-btn {
+    font-size: 0.62rem;
   }
 
   .message {
     max-width: 100%;
+  }
+
+  .compose-line {
+    flex-wrap: nowrap;
+  }
+
+  .compose-line input {
+    font-size: 16px;
+  }
+
+  .tool-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .profile-chip-name {
+    max-width: 90px;
+  }
+
+  .gate {
+    padding: 10px;
+  }
+
+  .gate-sheet {
+    padding: 28px 22px 22px;
+  }
+
+  .profile-stat-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (min-width: 1101px) {
+  .folio-rooms,
+  .folio-chat,
+  .folio-side {
+    position: static;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: none;
+  }
+
+  .mobile-dock {
+    display: none !important;
   }
 }
 
@@ -1272,5 +1487,16 @@ select {
 
   .orb {
     display: none;
+  }
+
+  .folio-rooms,
+  .folio-chat,
+  .folio-side,
+  .room-item,
+  .dock-btn,
+  .tool-btn,
+  .pill-btn,
+  .side-chevron {
+    transition: none !important;
   }
 }

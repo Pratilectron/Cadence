@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="description" content="Cadence — quiet rooms, loud ideas" />
   <meta name="theme-color" content="#0a0908" />
   <title>Cadence</title>
@@ -38,8 +38,8 @@
       </div>
     </header>
 
-    <main class="stage">
-      <aside class="folio folio-rooms" id="sidebar-rooms">
+    <main class="stage" id="stage">
+      <aside class="folio folio-rooms is-panel-active" id="sidebar-rooms" data-panel="rooms">
         <div class="folio-head">
           <span class="folio-label">Rooms</span>
         </div>
@@ -57,7 +57,7 @@
         <div class="folio-scroll scrollbar" id="room-list" role="list"></div>
       </aside>
 
-      <section class="folio folio-chat">
+      <section class="folio folio-chat is-panel-active" data-panel="chat">
         <header class="chat-stage-head">
           <div>
             <p class="stage-kicker" id="room-type-label">Public</p>
@@ -99,7 +99,7 @@
         </div>
       </section>
 
-      <aside class="folio folio-side" id="sidebar-people">
+      <aside class="folio folio-side is-panel-active" id="sidebar-people" data-panel="people">
         <div class="side-stack">
           <section class="side-section side-grow" data-section="here">
             <button type="button" class="side-head" aria-expanded="true" aria-controls="user-list-panel">
@@ -140,6 +140,21 @@
         </div>
       </aside>
     </main>
+
+    <nav class="mobile-dock" id="mobile-dock" aria-label="Main navigation" hidden>
+      <button type="button" class="dock-btn" data-panel="rooms" aria-pressed="false">
+        <span class="dock-icon" aria-hidden="true">⌂</span>
+        <span class="dock-label">Rooms</span>
+      </button>
+      <button type="button" class="dock-btn active" data-panel="chat" aria-pressed="true">
+        <span class="dock-icon" aria-hidden="true">◉</span>
+        <span class="dock-label">Chat</span>
+      </button>
+      <button type="button" class="dock-btn" data-panel="people" aria-pressed="false">
+        <span class="dock-icon" aria-hidden="true">◎</span>
+        <span class="dock-label">People</span>
+      </button>
+    </nav>
   </div>
 
   <dialog class="gate" id="invite-dialog" aria-labelledby="invite-title">

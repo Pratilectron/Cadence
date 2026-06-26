@@ -15,6 +15,7 @@ import {
 
   const SESSION_KEY = 'cadence_session';
   const SIDEBAR_KEY = 'cadence_sidebar';
+  const PANEL_KEY = 'cadence_panel';
   const motionOk = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const state = {
@@ -90,7 +91,10 @@ import {
     activityLog: $('activity-log'),
     rolesPanel: $('roles-panel'),
     recordBtn: $('record-btn'),
+    mobileDock: $('mobile-dock'),
   };
+
+  let mobilePanels = null;
 
   function motion(el, keyframes, options) {
     if (!motionOk || !el) return;
@@ -364,6 +368,72 @@ import {
     } catch (err) {
       showToast(err.message, 'error');
     }
+  }
+
+  function initMobilePanels() {
+    const dock = elements.mobileDock;
+    const panels = document.querySelectorAll('[data-panel]');
+    if (!dock || !panels.length) return null;
+
+    const mq = window.matchMedia('(max-width: 1100px)');
+
+    function setPanel(name, animate = true) {
+      if (!mq.matches) return;
+      panels.forEach((panel) => {
+        const active = panel.dataset.panel === name;
+        panel.classList.toggle('is-panel-active', active);
+        if (active && animate && motionOk) {
+          motion(panel, { opacity: [0.72, 1], y: [12, 0] }, { duration: 0.34, easing: spring() });
+        }
+      });
+      dock.querySelectorAll('.dock-btn').forEach((btn) => {
+        const active = btn.dataset.panel === name;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', String(active));
+      });
+      try {
+        localStorage.setItem(PANEL_KEY, name);
+      } catch { /* ignore */ }
+    }
+
+    function applyDesktop() {
+      dock.hidden = true;
+      panels.forEach((p) => p.classList.add('is-panel-active'));
+    }
+
+    function applyMobile() {
+      dock.hidden = false;
+      let saved = 'chat';
+      try {
+        saved = localStorage.getItem(PANEL_KEY) || 'chat';
+      } catch { /* ignore */ }
+      setPanel(saved, false);
+    }
+
+    function onBreakpointChange() {
+      if (mq.matches) applyMobile();
+      else applyDesktop();
+    }
+
+    dock.addEventListener('click', (e) => {
+      const btn = e.target.closest('.dock-btn');
+      if (!btn || !mq.matches) return;
+      const name = btn.dataset.panel;
+      if (btn.classList.contains('active') && name !== 'chat') {
+        setPanel('chat');
+        return;
+      }
+      setPanel(name);
+    });
+
+    mq.addEventListener('change', onBreakpointChange);
+    onBreakpointChange();
+
+    return { setPanel, isMobile: () => mq.matches };
+  }
+
+  function goToChatPanel() {
+    mobilePanels?.setPanel?.('chat');
   }
 
   function persistSession(token, username) {
@@ -680,6 +750,7 @@ import {
     state.socket?.emit('requestActivity', { room: roomName });
     state.socket?.emit('getRoomRoles', { room: roomName });
     updateInviteButton();
+    goToChatPanel();
   }
 
   function applyRoomRoles(payload) {
@@ -795,6 +866,7 @@ import {
       if (roomName === state.activeRoom || item.dataset.joinable !== 'true') return;
       state.socket.emit('joinRoom', roomName);
       state.unread[roomName] = 0;
+      goToChatPanel();
     });
 
     elements.authModeButton.addEventListener('click', () => setAuthMode(state.authMode === 'login' ? 'register' : 'login'));
@@ -952,6 +1024,7 @@ import {
     initAmbient();
     introReveal();
     initSidebar();
+    mobilePanels = initMobilePanels();
     initSocket();
     bindEvents();
     renderPicker();
