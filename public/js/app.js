@@ -3,11 +3,19 @@ import { EMOJI_LIST } from './emojis.js';
 import { renderRolesPanel, can } from './roles-ui.js';
 import { bindImageClick } from './viewer.js';
 import { openRecorder } from './recorder.js';
+import {
+  avatarLetter,
+  apiProfile,
+  bindProfileTabs,
+  fillProfileForm,
+} from './profile.js';
 
 (() => {
   'use strict';
 
   const SESSION_KEY = 'cadence_session';
+  const SIDEBAR_KEY = 'cadence_sidebar';
+  const PANEL_KEY = 'cadence_panel';
   const motionOk = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const state = {
@@ -15,6 +23,7 @@ import { openRecorder } from './recorder.js';
     user: null,
     sessionToken: null,
     activeRoom: 'General',
+    activeRoomType: 'public',
     authMode: 'login',
     unread: Object.create(null),
     lastRoomList: [],
@@ -23,6 +32,12 @@ import { openRecorder } from './recorder.js';
     pickerOpen: false,
     roomRoles: null,
     myPermissions: {},
+    profile: null,
+    preferences: {
+      soundEnabled: true,
+      activitySounds: true,
+      showTimestamps: true,
+    },
   };
 
   const $ = (id) => document.getElementById(id);
@@ -45,6 +60,14 @@ import { openRecorder } from './recorder.js';
     inviteForm: $('invite-form'),
     inviteUsername: $('invite-username'),
     inviteNote: $('invite-note'),
+    inviteBtn: $('invite-btn'),
+    inviteDialog: $('invite-dialog'),
+    inviteClose: $('invite-close'),
+    inviteRoomName: $('invite-room-name'),
+    profileBtn: $('profile-btn'),
+    profileAvatar: $('profile-avatar'),
+    profileDialog: $('profile-dialog'),
+    profileClose: $('profile-close'),
     logoutBtn: $('logout-btn'),
     adminLink: $('admin-link'),
     authDialog: $('auth-dialog'),
@@ -68,7 +91,10 @@ import { openRecorder } from './recorder.js';
     activityLog: $('activity-log'),
     rolesPanel: $('roles-panel'),
     recordBtn: $('record-btn'),
+    mobileDock: $('mobile-dock'),
   };
+
+  let mobilePanels = null;
 
   function motion(el, keyframes, options) {
     if (!motionOk || !el) return;
@@ -195,6 +221,219 @@ import { openRecorder } from './recorder.js';
       if (motionOk) animate(toast, { opacity: [1, 0], y: [0, 8] }, { duration: 0.25 }).finished.then(() => toast.remove());
       else toast.remove();
     }, ttl);
+  }
+
+  function showModal(dialog) {
+    if (typeof dialog.showModal !== 'function') return;
+    dialog.showModal();
+    const sheet = dialog.querySelector('.gate-sheet');
+    motion(sheet, { opacity: [0, 1], scale: [0.94, 1], y: [20, 0] }, { duration: 0.45, easing: spring() });
+  }
+
+  function hideModal(dialog) {
+    if (!dialog?.open) return;
+    const sheet = dialog.querySelector('.gate-sheet');
+    if (motionOk && sheet) {
+      animate(sheet, { opacity: [1, 0], scale: [1, 0.96], y: [0, 10] }, { duration: 0.25 }).finished.then(() => dialog.close());
+    } else {
+      dialog.close();
+    }
+  }
+
+  function readSidebarState() {
+    try {
+      const raw = localStorage.getItem(SIDEBAR_KEY);
+      return raw ? JSON.parse(raw) : { pinned: false, here: true, roles: true, activity: true };
+    } catch {
+      return { pinned: false, here: true, roles: true, activity: true };
+    }
+  }
+
+  function saveSidebarState(next) {
+    localStorage.setItem(SIDEBAR_KEY, JSON.stringify(next));
+  }
+
+  function initSidebar() {
+    const saved = readSidebarState();
+    document.querySelectorAll('.side-section').forEach((section) => {
+      const key = section.dataset.section;
+      let expanded;
+      if (key === 'pinned' && saved.pinned === undefined) {
+        expanded = false;
+      } else {
+        expanded = saved[key] !== false;
+      }
+      section.classList.toggle('is-collapsed', !expanded);
+      section.querySelector('.side-head')?.setAttribute('aria-expanded', String(expanded));
+    });
+  }
+
+  function toggleSidebarSection(section) {
+    const key = section.dataset.section;
+    const collapsed = section.classList.toggle('is-collapsed');
+    const expanded = !collapsed;
+    section.querySelector('.side-head')?.setAttribute('aria-expanded', String(expanded));
+    const saved = readSidebarState();
+    saved[key] = expanded;
+    saveSidebarState(saved);
+  }
+
+  function updateUserChip(name) {
+    const label = name || 'Guest';
+    elements.meName.textContent = label;
+    elements.profileAvatar.textContent = avatarLetter(label);
+  }
+
+  function updateInviteButton() {
+    const room = state.lastRoomList.find((r) => r.name === state.activeRoom);
+    const type = room?.type || state.activeRoomType;
+    const show = Boolean(state.user) && (type === 'private' || type === 'locked');
+    elements.inviteBtn.hidden = !show;
+  }
+
+  function openInviteDialog() {
+    elements.inviteRoomName.textContent = state.activeRoom;
+    elements.inviteNote.textContent = '';
+    elements.inviteNote.className = 'form-status';
+    elements.inviteUsername.value = '';
+    showModal(elements.inviteDialog);
+    elements.inviteUsername.focus();
+  }
+
+  const profileEls = {
+    get heroAvatar() { return $('profile-hero-avatar'); },
+    get chipAvatar() { return elements.profileAvatar; },
+    get title() { return $('profile-title'); },
+    get username() { return $('profile-username'); },
+    get memberSince() { return $('profile-member-since'); },
+    get displayName() { return $('profile-display-name'); },
+    get bio() { return $('profile-bio'); },
+    get stats() { return $('profile-stats'); },
+    get dataList() { return $('profile-data-list'); },
+    get prefSound() { return $('pref-sound'); },
+    get prefActivitySound() { return $('pref-activity-sound'); },
+    get prefTimestamps() { return $('pref-timestamps'); },
+    formatBytes,
+  };
+
+  async function openProfileDialog() {
+    if (!state.sessionToken) {
+      showAuthDialog();
+      return;
+    }
+    try {
+      const { profile } = await apiProfile(state.sessionToken, '/api/profile');
+      state.profile = profile;
+      state.preferences = { ...state.preferences, ...profile.preferences };
+      fillProfileForm(profile, profileEls);
+      showModal(elements.profileDialog);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  async function saveProfileFields() {
+    try {
+      const { profile } = await apiProfile(state.sessionToken, '/api/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          displayName: profileEls.displayName.value.trim(),
+          bio: profileEls.bio.value.trim(),
+        }),
+      });
+      state.profile = profile;
+      const chipName = profile.displayName || profile.username;
+      updateUserChip(chipName);
+      fillProfileForm(profile, profileEls);
+      showToast('Profile saved', 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  async function saveProfilePreferences() {
+    try {
+      const prefs = {
+        soundEnabled: profileEls.prefSound.checked,
+        activitySounds: profileEls.prefActivitySound.checked,
+        showTimestamps: profileEls.prefTimestamps.checked,
+      };
+      const { profile } = await apiProfile(state.sessionToken, '/api/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({ preferences: prefs }),
+      });
+      state.profile = profile;
+      state.preferences = { ...state.preferences, ...profile.preferences };
+      showToast('Preferences saved', 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  function initMobilePanels() {
+    const dock = elements.mobileDock;
+    const panels = document.querySelectorAll('[data-panel]');
+    if (!dock || !panels.length) return null;
+
+    const mq = window.matchMedia('(max-width: 1100px)');
+
+    function setPanel(name, animate = true) {
+      if (!mq.matches) return;
+      panels.forEach((panel) => {
+        const active = panel.dataset.panel === name;
+        panel.classList.toggle('is-panel-active', active);
+        if (active && animate && motionOk) {
+          motion(panel, { opacity: [0.72, 1], y: [12, 0] }, { duration: 0.34, easing: spring() });
+        }
+      });
+      dock.querySelectorAll('.dock-btn').forEach((btn) => {
+        const active = btn.dataset.panel === name;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', String(active));
+      });
+      try {
+        localStorage.setItem(PANEL_KEY, name);
+      } catch { /* ignore */ }
+    }
+
+    function applyDesktop() {
+      dock.hidden = true;
+      panels.forEach((p) => p.classList.add('is-panel-active'));
+    }
+
+    function applyMobile() {
+      dock.hidden = false;
+      let saved = 'chat';
+      try {
+        saved = localStorage.getItem(PANEL_KEY) || 'chat';
+      } catch { /* ignore */ }
+      setPanel(saved, false);
+    }
+
+    function onBreakpointChange() {
+      if (mq.matches) applyMobile();
+      else applyDesktop();
+    }
+
+    dock.addEventListener('click', (e) => {
+      const btn = e.target.closest('.dock-btn');
+      if (!btn || !mq.matches) return;
+      const name = btn.dataset.panel;
+      if (btn.classList.contains('active') && name !== 'chat') {
+        setPanel('chat');
+        return;
+      }
+      setPanel(name);
+    });
+
+    mq.addEventListener('change', onBreakpointChange);
+    onBreakpointChange();
+
+    return { setPanel, isMobile: () => mq.matches };
+  }
+
+  function goToChatPanel() {
+    mobilePanels?.setPanel?.('chat');
   }
 
   function persistSession(token, username) {
@@ -449,7 +688,8 @@ import { openRecorder } from './recorder.js';
     const sender = document.createElement('span');
     sender.textContent = payload.senderName || (type === 'me' ? 'You' : 'Guest');
     const time = document.createElement('span');
-    time.textContent = formatTime(payload.ts);
+    time.textContent = state.preferences.showTimestamps ? formatTime(payload.ts) : '';
+    time.hidden = !state.preferences.showTimestamps;
     const pinButton = document.createElement('button');
     pinButton.type = 'button';
     pinButton.className = 'pin-button';
@@ -471,20 +711,28 @@ import { openRecorder } from './recorder.js';
     state.user = { id: data.id, username: data.username, isSuperAdmin: data.isSuperAdmin };
     state.sessionToken = data.token;
     persistSession(data.token, data.username);
-    elements.meName.textContent = data.username;
+    updateUserChip(data.displayName || data.username);
     elements.logoutBtn.hidden = false;
     if (elements.adminLink) elements.adminLink.hidden = !data.isSuperAdmin;
     hideAuthDialog();
     showToast(`Welcome, ${data.username}`, 'success');
     refreshStorage();
     refreshCustomEmojis();
+    updateInviteButton();
+    apiProfile(data.token, '/api/profile').then(({ profile }) => {
+      state.profile = profile;
+      state.preferences = { ...state.preferences, ...profile.preferences };
+      updateUserChip(profile.displayName || profile.username);
+    }).catch(() => {});
   }
 
   function handleLoggedOut() {
     clearSession();
-    elements.meName.textContent = 'Guest';
+    state.profile = null;
+    updateUserChip('Guest');
     elements.logoutBtn.hidden = true;
     if (elements.adminLink) elements.adminLink.hidden = true;
+    elements.inviteBtn.hidden = true;
     setAuthMode('login');
     showAuthDialog();
     showToast('Signed out', 'info');
@@ -492,6 +740,7 @@ import { openRecorder } from './recorder.js';
 
   function handleRoomChange(roomName, type) {
     state.activeRoom = roomName;
+    state.activeRoomType = type;
     state.messageIds.clear();
     state.unread[roomName] = 0;
     motion(elements.activeRoom, { opacity: [0.4, 1], y: [8, 0] }, { duration: 0.35, easing: spring() });
@@ -500,6 +749,8 @@ import { openRecorder } from './recorder.js';
     if (state.lastRoomList.length) renderRoomList(state.lastRoomList);
     state.socket?.emit('requestActivity', { room: roomName });
     state.socket?.emit('getRoomRoles', { room: roomName });
+    updateInviteButton();
+    goToChatPanel();
   }
 
   function applyRoomRoles(payload) {
@@ -561,6 +812,7 @@ import { openRecorder } from './recorder.js';
     state.socket.on('roomlist', (rooms) => {
       state.lastRoomList = rooms;
       renderRoomList(rooms);
+      updateInviteButton();
     });
     state.socket.on('userlist', renderUserList);
     state.socket.on('history', (messages) => {
@@ -583,9 +835,13 @@ import { openRecorder } from './recorder.js';
     state.socket.on('roomError', (payload) => showToast(payload?.reason || 'Room error', 'error'));
     state.socket.on('inviteSuccess', (payload) => {
       elements.inviteNote.textContent = `${payload.username} invited to ${payload.room}.`;
+      elements.inviteNote.className = 'form-status';
+      showToast(`Invited ${payload.username}`, 'success');
     });
     state.socket.on('inviteError', (payload) => {
       elements.inviteNote.textContent = payload.reason || 'Invite failed.';
+      elements.inviteNote.className = 'form-error';
+      showToast(payload.reason || 'Invite failed.', 'error');
     });
     state.socket.on('activityHistory', renderActivityLog);
     state.socket.on('roomRoles', applyRoomRoles);
@@ -610,6 +866,7 @@ import { openRecorder } from './recorder.js';
       if (roomName === state.activeRoom || item.dataset.joinable !== 'true') return;
       state.socket.emit('joinRoom', roomName);
       state.unread[roomName] = 0;
+      goToChatPanel();
     });
 
     elements.authModeButton.addEventListener('click', () => setAuthMode(state.authMode === 'login' ? 'register' : 'login'));
@@ -642,10 +899,53 @@ import { openRecorder } from './recorder.js';
       const username = elements.inviteUsername.value.trim();
       if (!username) {
         elements.inviteNote.textContent = 'Enter a username.';
+        elements.inviteNote.className = 'form-error';
         return;
       }
       state.socket.emit('inviteUser', { room: state.activeRoom, username });
       elements.inviteUsername.value = '';
+    });
+
+    elements.inviteBtn.addEventListener('click', openInviteDialog);
+    elements.inviteClose.addEventListener('click', () => hideModal(elements.inviteDialog));
+    elements.inviteDialog.addEventListener('cancel', (e) => {
+      e.preventDefault();
+      hideModal(elements.inviteDialog);
+    });
+
+    elements.profileBtn.addEventListener('click', openProfileDialog);
+    elements.profileClose.addEventListener('click', () => hideModal(elements.profileDialog));
+    elements.profileDialog.addEventListener('cancel', (e) => {
+      e.preventDefault();
+      hideModal(elements.profileDialog);
+    });
+    bindProfileTabs(elements.profileDialog);
+    $('profile-save')?.addEventListener('click', saveProfileFields);
+    $('profile-save-prefs')?.addEventListener('click', saveProfilePreferences);
+    $('password-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errEl = $('profile-password-error');
+      errEl.textContent = '';
+      try {
+        await apiProfile(state.sessionToken, '/api/profile/password', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            currentPassword: $('profile-current-password').value,
+            newPassword: $('profile-new-password').value,
+          }),
+        });
+        $('profile-current-password').value = '';
+        $('profile-new-password').value = '';
+        showToast('Password updated', 'success');
+      } catch (err) {
+        errEl.textContent = err.message;
+      }
+    });
+
+    document.querySelectorAll('.side-section .side-head').forEach((head) => {
+      head.addEventListener('click', () => {
+        toggleSidebarSection(head.closest('.side-section'));
+      });
     });
 
     elements.logoutBtn.addEventListener('click', () => {
@@ -723,6 +1023,8 @@ import { openRecorder } from './recorder.js';
   document.addEventListener('DOMContentLoaded', () => {
     initAmbient();
     introReveal();
+    initSidebar();
+    mobilePanels = initMobilePanels();
     initSocket();
     bindEvents();
     renderPicker();

@@ -70,10 +70,26 @@
       </section>
 
       <section class="admin-section" id="sec-security">
-        <header class="admin-head"><h1>Security</h1><p>Sessions and access</p></header>
+        <header class="admin-head"><h1>Security</h1><p>Sessions and destructive actions</p></header>
         <div class="security-panel">
           <p class="whisper">Revoke all active sessions — users must sign in again.</p>
           <button type="button" class="pill-btn pill-accent" id="revoke-sessions">Revoke all sessions</button>
+        </div>
+        <div class="danger-panel">
+          <p class="folio-label">Platform wipe</p>
+          <p class="whisper">Deletes every user except you, all uploads, activity logs, custom emojis, and non-default rooms. Messages and pins are cleared. This cannot be undone.</p>
+          <form class="wipe-form" id="wipe-form">
+            <label>
+              <span>Your password</span>
+              <input type="password" id="wipe-password" autocomplete="current-password" required />
+            </label>
+            <label>
+              <span>Type WIPE to confirm</span>
+              <input type="text" id="wipe-confirm" autocomplete="off" placeholder="WIPE" required />
+            </label>
+            <button type="submit" class="pill-btn pill-danger">Wipe all data except me</button>
+            <p class="form-error" id="wipe-error" role="alert"></p>
+          </form>
         </div>
       </section>
     </main>

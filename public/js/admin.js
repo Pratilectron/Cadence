@@ -214,6 +214,34 @@ $('revoke-sessions').addEventListener('click', async () => {
   }
 });
 
+$('wipe-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = $('wipe-error');
+  errEl.textContent = '';
+  const password = $('wipe-password').value;
+  const confirmText = $('wipe-confirm').value.trim();
+  if (confirmText !== 'WIPE') {
+    errEl.textContent = 'Type WIPE exactly to confirm.';
+    return;
+  }
+  if (!window.confirm('This permanently deletes all users except you, all files, logs, and custom rooms. Continue?')) {
+    return;
+  }
+  try {
+    const { result } = await api('/api/admin/wipe', {
+      method: 'POST',
+      body: JSON.stringify({ password, confirm: confirmText }),
+    });
+    $('wipe-password').value = '';
+    $('wipe-confirm').value = '';
+    toast(`Wiped: ${result.usersRemoved} users, ${result.filesRemoved} files, ${result.logsCleared} log entries`, 'success');
+    await loadDashboard();
+  } catch (err) {
+    errEl.textContent = err.message;
+    toast(err.message, 'error');
+  }
+});
+
 (async function init() {
   if (!getToken()) {
     $('admin-user').textContent = 'Not signed in';

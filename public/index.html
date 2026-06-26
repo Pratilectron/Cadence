@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="description" content="Cadence — quiet rooms, loud ideas" />
   <meta name="theme-color" content="#0a0908" />
   <title>Cadence</title>
@@ -38,8 +38,8 @@
       </div>
     </header>
 
-    <main class="stage">
-      <aside class="folio folio-rooms" id="sidebar-rooms">
+    <main class="stage" id="stage">
+      <aside class="folio folio-rooms is-panel-active" id="sidebar-rooms" data-panel="rooms">
         <div class="folio-head">
           <span class="folio-label">Rooms</span>
         </div>
@@ -57,13 +57,19 @@
         <div class="folio-scroll scrollbar" id="room-list" role="list"></div>
       </aside>
 
-      <section class="folio folio-chat">
+      <section class="folio folio-chat is-panel-active" data-panel="chat">
         <header class="chat-stage-head">
           <div>
             <p class="stage-kicker" id="room-type-label">Public</p>
             <h1 class="stage-title" id="active-room">General</h1>
           </div>
-          <p class="stage-you" id="me-name">Guest</p>
+          <div class="stage-actions">
+            <button type="button" class="pill-btn stage-invite-btn" id="invite-btn" hidden>Invite</button>
+            <button type="button" class="profile-chip" id="profile-btn" aria-haspopup="dialog">
+              <span class="profile-avatar" id="profile-avatar">?</span>
+              <span class="profile-chip-name" id="me-name">Guest</span>
+            </button>
+          </div>
         </header>
         <div class="chat-stream scrollbar" id="messages" role="log" aria-live="polite" aria-relevant="additions"></div>
         <div class="compose-toolbar">
@@ -93,36 +99,144 @@
         </div>
       </section>
 
-      <aside class="folio folio-side" id="sidebar-people">
-        <div class="folio-head">
-          <span class="folio-label">Here</span>
-        </div>
-        <div class="folio-scroll scrollbar people-scroll" id="user-list" role="list"></div>
-        <div class="folio-block">
-          <span class="folio-label">Pinned</span>
-          <div class="folio-scroll scrollbar pin-scroll" id="pinned-list"></div>
-        </div>
-        <div class="folio-block roles-zone">
-          <span class="folio-label">Roles</span>
-          <div id="roles-panel"></div>
-        </div>
-        <div class="folio-block invite-zone">
-          <span class="folio-label">Invite</span>
-          <form class="micro-form" id="invite-form">
-            <div class="micro-row">
-              <input id="invite-username" placeholder="Username" maxlength="32" autocomplete="off" aria-label="Invite username" />
-              <button type="submit" class="pill-btn">→</button>
+      <aside class="folio folio-side is-panel-active" id="sidebar-people" data-panel="people">
+        <div class="side-stack">
+          <section class="side-section side-grow" data-section="here">
+            <button type="button" class="side-head" aria-expanded="true" aria-controls="user-list-panel">
+              <span class="folio-label">Who's here</span>
+              <span class="side-chevron" aria-hidden="true">▾</span>
+            </button>
+            <div class="side-body scrollbar" id="user-list-panel">
+              <div id="user-list" role="list"></div>
             </div>
-          </form>
-          <p class="whisper" id="invite-note"></p>
-        </div>
-        <div class="folio-block activity-zone">
-          <span class="folio-label">Activity</span>
-          <div class="folio-scroll scrollbar activity-scroll" id="activity-log"></div>
+          </section>
+          <section class="side-section is-collapsed" data-section="pinned">
+            <button type="button" class="side-head" aria-expanded="false" aria-controls="pinned-list-panel">
+              <span class="folio-label">Pinned</span>
+              <span class="side-chevron" aria-hidden="true">▾</span>
+            </button>
+            <div class="side-body scrollbar" id="pinned-list-panel">
+              <div id="pinned-list"></div>
+            </div>
+          </section>
+          <section class="side-section" data-section="roles">
+            <button type="button" class="side-head" aria-expanded="true" aria-controls="roles-panel-wrap">
+              <span class="folio-label">Roles</span>
+              <span class="side-chevron" aria-hidden="true">▾</span>
+            </button>
+            <div class="side-body" id="roles-panel-wrap">
+              <div id="roles-panel"></div>
+            </div>
+          </section>
+          <section class="side-section side-grow" data-section="activity">
+            <button type="button" class="side-head" aria-expanded="true" aria-controls="activity-log-panel">
+              <span class="folio-label">Activity</span>
+              <span class="side-chevron" aria-hidden="true">▾</span>
+            </button>
+            <div class="side-body scrollbar" id="activity-log-panel">
+              <div id="activity-log"></div>
+            </div>
+          </section>
         </div>
       </aside>
     </main>
+
+    <nav class="mobile-dock" id="mobile-dock" aria-label="Main navigation" hidden>
+      <button type="button" class="dock-btn" data-panel="rooms" aria-pressed="false">
+        <span class="dock-icon" aria-hidden="true">⌂</span>
+        <span class="dock-label">Rooms</span>
+      </button>
+      <button type="button" class="dock-btn active" data-panel="chat" aria-pressed="true">
+        <span class="dock-icon" aria-hidden="true">◉</span>
+        <span class="dock-label">Chat</span>
+      </button>
+      <button type="button" class="dock-btn" data-panel="people" aria-pressed="false">
+        <span class="dock-icon" aria-hidden="true">◎</span>
+        <span class="dock-label">People</span>
+      </button>
+    </nav>
   </div>
+
+  <dialog class="gate" id="invite-dialog" aria-labelledby="invite-title">
+    <div class="gate-sheet">
+      <button type="button" class="link-btn gate-close" id="invite-close" aria-label="Close">✕</button>
+      <p class="gate-kicker">Channel</p>
+      <h2 id="invite-title">Invite someone</h2>
+      <p class="gate-copy">Add a member to <strong id="invite-room-name">this room</strong>. They'll see it in their room list.</p>
+      <form class="gate-form" id="invite-form">
+        <label>
+          <span>Username</span>
+          <input id="invite-username" maxlength="32" autocomplete="off" placeholder="their username" required />
+        </label>
+        <button type="submit" class="pill-btn pill-accent pill-wide">Send invite</button>
+        <p class="form-status" id="invite-note" role="status"></p>
+      </form>
+    </div>
+  </dialog>
+
+  <dialog class="gate profile-dialog" id="profile-dialog" aria-labelledby="profile-title">
+    <div class="gate-sheet gate-sheet--profile">
+      <button type="button" class="link-btn gate-close" id="profile-close" aria-label="Close">✕</button>
+      <div class="profile-hero">
+        <div class="profile-hero-avatar" id="profile-hero-avatar">?</div>
+        <div>
+          <h2 id="profile-title">Profile</h2>
+          <p class="profile-hero-user" id="profile-username">—</p>
+          <p class="profile-hero-meta" id="profile-member-since"></p>
+        </div>
+      </div>
+      <div class="profile-tabs">
+        <button type="button" class="profile-tab active" data-tab="overview">Overview</button>
+        <button type="button" class="profile-tab" data-tab="settings">Settings</button>
+        <button type="button" class="profile-tab" data-tab="security">Security</button>
+      </div>
+      <div class="profile-panel active" id="profile-tab-overview">
+        <div class="profile-stat-grid" id="profile-stats"></div>
+        <label class="profile-field">
+          <span>Display name</span>
+          <input id="profile-display-name" maxlength="32" placeholder="Optional nickname" />
+        </label>
+        <label class="profile-field">
+          <span>Bio</span>
+          <textarea id="profile-bio" maxlength="160" rows="3" placeholder="A line about you…"></textarea>
+        </label>
+        <button type="button" class="pill-btn pill-accent" id="profile-save">Save profile</button>
+      </div>
+      <div class="profile-panel" id="profile-tab-settings">
+        <div class="profile-toggle-row">
+          <span>Message sounds</span>
+          <input type="checkbox" id="pref-sound" />
+        </div>
+        <div class="profile-toggle-row">
+          <span>Activity sounds</span>
+          <input type="checkbox" id="pref-activity-sound" />
+        </div>
+        <div class="profile-toggle-row">
+          <span>Show message timestamps</span>
+          <input type="checkbox" id="pref-timestamps" />
+        </div>
+        <button type="button" class="pill-btn pill-accent" id="profile-save-prefs">Save preferences</button>
+        <div class="profile-data-block">
+          <p class="folio-label">Your data</p>
+          <div class="profile-data-list" id="profile-data-list"></div>
+        </div>
+      </div>
+      <div class="profile-panel" id="profile-tab-security">
+        <form class="gate-form" id="password-form">
+          <label>
+            <span>Current password</span>
+            <input id="profile-current-password" type="password" autocomplete="current-password" />
+          </label>
+          <label>
+            <span>New password</span>
+            <input id="profile-new-password" type="password" minlength="8" autocomplete="new-password" />
+          </label>
+          <button type="submit" class="pill-btn pill-accent pill-wide">Change password</button>
+          <p class="form-error" id="profile-password-error" role="alert"></p>
+        </form>
+      </div>
+    </div>
+  </dialog>
 
   <dialog class="gate" id="auth-dialog" aria-labelledby="auth-title">
     <div class="gate-sheet">

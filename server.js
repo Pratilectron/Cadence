@@ -29,6 +29,7 @@ const {
 const { getConfig, reloadConfig, isSuperAdminUsername } = require('./lib/config');
 const adminLib = require('./lib/admin');
 const { handleAdminApi } = require('./lib/admin-api');
+const { buildProfile, updateProfile } = require('./lib/profile');
 
 function cfg() {
   return getConfig();
@@ -292,6 +293,11 @@ async function handleHttp(req, res) {
       saveUsersDb,
       rooms,
       sessions,
+      rateLimits,
+      dbPath: DB_PATH,
+      findUserById,
+      verifyPassword,
+      resetPlatformState,
     });
     if (handled) return;
   }
@@ -322,6 +328,71 @@ async function handleHttp(req, res) {
     const room = params.get('room') || null;
     const limit = Math.min(Number(params.get('limit')) || 80, 200);
     jsonResponse(res, 200, { logs: readActivity({ room, limit }) });
+    return;
+  }
+
+  if (urlPath === '/api/profile' && req.method === 'GET') {
+    const sessionUser = getSessionUser(getTokenFromReq(req));
+    if (!sessionUser) {
+      jsonResponse(res, 401, { error: 'Authentication required.' });
+      return;
+    }
+    const record = findUserById(sessionUser.id);
+    if (!record) {
+      jsonResponse(res, 404, { error: 'User not found.' });
+      return;
+    }
+    jsonResponse(res, 200, { profile: buildProfile(record) });
+    return;
+  }
+
+  if (urlPath === '/api/profile' && req.method === 'PATCH') {
+    const sessionUser = getSessionUser(getTokenFromReq(req));
+    if (!sessionUser) {
+      jsonResponse(res, 401, { error: 'Authentication required.' });
+      return;
+    }
+    try {
+      const body = await readJsonBody(req);
+      const profile = updateProfile(usersDb, saveUsersDb, sessionUser.id, body);
+      jsonResponse(res, 200, { profile });
+    } catch (err) {
+      jsonResponse(res, 400, { error: err.message || 'Update failed.' });
+    }
+    return;
+  }
+
+  if (urlPath === '/api/profile/password' && req.method === 'PATCH') {
+    const sessionUser = getSessionUser(getTokenFromReq(req));
+    if (!sessionUser) {
+      jsonResponse(res, 401, { error: 'Authentication required.' });
+      return;
+    }
+    try {
+      const body = await readJsonBody(req);
+      const user = findUserById(sessionUser.id);
+      if (!user) {
+        jsonResponse(res, 404, { error: 'User not found.' });
+        return;
+      }
+      if (!verifyPassword(String(body.currentPassword || ''), user)) {
+        jsonResponse(res, 400, { error: 'Current password is incorrect.' });
+        return;
+      }
+      const next = String(body.newPassword || '');
+      if (next.length < 8) {
+        jsonResponse(res, 400, { error: 'New password must be at least 8 characters.' });
+        return;
+      }
+      const upgraded = hashPasswordScrypt(next);
+      user.algo = upgraded.algo;
+      user.salt = upgraded.salt;
+      user.passwordHash = upgraded.passwordHash;
+      saveUsersDb();
+      jsonResponse(res, 200, { ok: true });
+    } catch (err) {
+      jsonResponse(res, 400, { error: err.message || 'Password change failed.' });
+    }
     return;
   }
 
@@ -409,6 +480,52 @@ function sendRoomList(socket) {
 
 function broadcastRoomLists() {
   io.sockets.sockets.forEach((socket) => sendRoomList(socket));
+}
+
+function resetPlatformState(actorUserId, keepToken) {
+  const defaultNames = cfg().defaultRooms;
+  const defaultRoom = defaultNames[0] || 'General';
+
+  for (const key of Object.keys(rooms)) {
+    if (!defaultNames.includes(key)) delete rooms[key];
+  }
+  for (const name of defaultNames) {
+    const room = createRoom(name, 'public');
+    room.name = name;
+    rooms[name] = room;
+  }
+
+  for (const socket of io.sockets.sockets.values()) {
+    for (const room of [...socket.rooms]) {
+      if (room !== socket.id) socket.leave(room);
+    }
+
+    const isKeeper = socket.user?.id === actorUserId && socket.data.sessionToken === keepToken;
+    if (!isKeeper) {
+      if (socket.data.sessionToken) revokeSession(socket.data.sessionToken);
+      socket.user = null;
+      socket.data.sessionToken = null;
+      socket.data.name = 'Anonymous';
+      socket.emit('loggedOut', {});
+    }
+
+    socket.join(defaultRoom);
+    socket.data.room = defaultRoom;
+    rooms[defaultRoom].users.set(socket.id, {
+      name: socket.data.name || 'Anonymous',
+      userId: socket.user?.id || null,
+    });
+
+    socket.emit('history', []);
+    socket.emit('pinned', []);
+    sendRoomList(socket);
+    broadcastUserlist(defaultRoom);
+  }
+
+  for (const name of defaultNames) {
+    if (name !== defaultRoom) broadcastUserlist(name);
+  }
+  broadcastRoomLists();
 }
 
 function broadcastUserlist(roomName) {
@@ -544,11 +661,14 @@ function requirePerm(socket, roomName, perm) {
 }
 
 function authPayload(user, token) {
+  const record = user.username ? findUserByUsername(user.username) || findUserById(user.id) : findUserById(user.id);
+  const source = record || user;
   return {
-    id: user.id,
-    username: user.username,
+    id: source.id,
+    username: source.username,
+    displayName: source.displayName || '',
     token,
-    isSuperAdmin: isSuperAdmin(user),
+    isSuperAdmin: isSuperAdmin(source),
   };
 }
 
