@@ -224,7 +224,8 @@ function checkRateLimit(key, maxAttempts, windowMs) {
 
 function isOriginAllowed(origin) {
   if (!origin) return true;
-  return cfg().allowedOrigins.includes(origin);
+  const normalized = origin.trim().replace(/\/$/, '');
+  return cfg().allowedOrigins.includes(normalized);
 }
 
 function jsonResponse(res, status, body) {
@@ -779,6 +780,7 @@ function pinSummary(message) {
 io.use((socket, next) => {
   const origin = socket.handshake.headers.origin;
   if (origin && !isOriginAllowed(origin)) {
+    console.warn(`[socket] rejected origin: ${origin}`);
     next(new Error('Origin not allowed'));
     return;
   }

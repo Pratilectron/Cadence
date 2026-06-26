@@ -773,7 +773,8 @@ import {
 
   function initSocket() {
     state.socket = io({
-      transports: ['websocket', 'polling'],
+      // Polling first — many shared hosts block WebSocket upgrades
+      transports: ['polling', 'websocket'],
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
@@ -781,13 +782,18 @@ import {
 
     state.socket.on('connect', () => {
       updateStatus('Live', '#8fae98');
+      elements.authError.textContent = '';
       state.socket.emit('requestRoomList');
       const saved = readSession();
       if (saved?.token) state.socket.emit('restoreSession', { token: saved.token });
       refreshStorage();
     });
 
-    state.socket.on('connect_error', () => updateStatus('Offline', '#c98b8b'));
+    state.socket.on('connect_error', (err) => {
+      updateStatus('Offline', '#c98b8b');
+      elements.authError.textContent = 'Cannot reach chat server. Check connection or try again shortly.';
+      console.error('Socket connect_error:', err?.message || err);
+    });
     state.socket.on('disconnect', () => updateStatus('Away', '#c98b8b'));
     state.socket.on('reconnect_attempt', () => updateStatus('Returning', '#c9a227'));
     state.socket.on('reconnect', () => {
