@@ -293,6 +293,11 @@ async function handleHttp(req, res) {
       saveUsersDb,
       rooms,
       sessions,
+      rateLimits,
+      dbPath: DB_PATH,
+      findUserById,
+      verifyPassword,
+      resetPlatformState,
     });
     if (handled) return;
   }
@@ -475,6 +480,52 @@ function sendRoomList(socket) {
 
 function broadcastRoomLists() {
   io.sockets.sockets.forEach((socket) => sendRoomList(socket));
+}
+
+function resetPlatformState(actorUserId, keepToken) {
+  const defaultNames = cfg().defaultRooms;
+  const defaultRoom = defaultNames[0] || 'General';
+
+  for (const key of Object.keys(rooms)) {
+    if (!defaultNames.includes(key)) delete rooms[key];
+  }
+  for (const name of defaultNames) {
+    const room = createRoom(name, 'public');
+    room.name = name;
+    rooms[name] = room;
+  }
+
+  for (const socket of io.sockets.sockets.values()) {
+    for (const room of [...socket.rooms]) {
+      if (room !== socket.id) socket.leave(room);
+    }
+
+    const isKeeper = socket.user?.id === actorUserId && socket.data.sessionToken === keepToken;
+    if (!isKeeper) {
+      if (socket.data.sessionToken) revokeSession(socket.data.sessionToken);
+      socket.user = null;
+      socket.data.sessionToken = null;
+      socket.data.name = 'Anonymous';
+      socket.emit('loggedOut', {});
+    }
+
+    socket.join(defaultRoom);
+    socket.data.room = defaultRoom;
+    rooms[defaultRoom].users.set(socket.id, {
+      name: socket.data.name || 'Anonymous',
+      userId: socket.user?.id || null,
+    });
+
+    socket.emit('history', []);
+    socket.emit('pinned', []);
+    sendRoomList(socket);
+    broadcastUserlist(defaultRoom);
+  }
+
+  for (const name of defaultNames) {
+    if (name !== defaultRoom) broadcastUserlist(name);
+  }
+  broadcastRoomLists();
 }
 
 function broadcastUserlist(roomName) {
