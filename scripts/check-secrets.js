@@ -16,7 +16,7 @@ const BLOCKED_PATTERNS = [
   /^credentials(\..*)?\.json$/,
 ];
 
-const ALLOWED = new Set(['.env.example']);
+const ALLOWED = new Set(['.env.example', 'data/.gitkeep']);
 
 function listStagedFiles() {
   try {
