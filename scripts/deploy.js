@@ -58,6 +58,14 @@ function main() {
   run('git', ['pull', 'origin', BRANCH]);
   run('npm', ['install', '--omit=dev']);
 
+  const native = spawnSync(process.execPath, [join(__dirname, 'install-native.js')], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
+  if (native.status !== 0) {
+    log('native module rebuild had warnings (bundled SQLite still works)');
+  }
+
   const tmpDir = join(ROOT, 'tmp');
   mkdirSync(tmpDir, { recursive: true });
   writeFileSync(join(tmpDir, 'restart.txt'), String(Date.now()), 'utf8');

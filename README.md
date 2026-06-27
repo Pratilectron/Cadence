@@ -107,6 +107,14 @@ Cadence ships a **bundled SQLite** (`vendor/sql-asm.js`) so the database works e
 
 To diagnose module issues on the server: `npm run check-host`
 
+To rebuild native modules (`better-sqlite3`, `sharp`) for your Node version after install:
+
+```bash
+npm run install-native
+```
+
+On DirectAdmin, run that via SSH from the application root after `npm install`, or use **Run NPM Install** then restart.
+
 ### DirectAdmin panel settings
 
 | Setting | Value |
