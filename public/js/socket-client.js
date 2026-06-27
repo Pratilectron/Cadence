@@ -7,12 +7,22 @@ export function createSocketOptions(extra = {}) {
     || host.endsWith('.local')
     || host.endsWith('.localhost');
 
+  const production = !localDev;
+
   return {
     path: '/socket.io',
     withCredentials: true,
-    // Polling-only on production — WebSocket upgrades often fail behind Passenger/Apache
     transports: localDev ? ['polling', 'websocket'] : ['polling'],
     upgrade: localDev,
+    ...(production ? {
+      // Survive brief Passenger reloads without a full reconnect storm
+      connectionStateRecovery: {
+        maxDisconnectionDuration: 3 * 60 * 1000,
+      },
+      reconnectionDelay: 2000,
+      reconnectionDelayMax: 15000,
+      randomizationFactor: 0.4,
+    } : {}),
     ...extra,
   };
 }

@@ -1,4 +1,6 @@
 # Cadence — Passenger / Socket.IO on DirectAdmin
-# Keeps all Socket.IO traffic on one Node process (required without a Redis adapter).
+# One Node process + sticky sessions (required without a Redis Socket.IO adapter).
 PassengerMaxInstances 1
 PassengerStickySessions on
+# Recycle less often — frequent restarts drop active Socket.IO sessions.
+PassengerMaxPoolSize 500

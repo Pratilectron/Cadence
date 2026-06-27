@@ -728,6 +728,9 @@ httpServer.on('request', (req, res) => {
 
 const underPassenger = Boolean(process.env.PASSENGER_APP_ENV)
   || typeof globalThis.PhusionPassenger !== 'undefined';
+const pollingOnly = underPassenger
+  || process.env.SOCKET_POLLING_ONLY === '1'
+  || process.env.NODE_ENV === 'production';
 
 const io = new Server(httpServer, {
   cors: {
@@ -737,11 +740,14 @@ const io = new Server(httpServer, {
     methods: ['GET', 'POST'],
     credentials: true,
   },
-  transports: underPassenger ? ['polling'] : ['polling', 'websocket'],
-  allowUpgrades: !underPassenger,
+  transports: pollingOnly ? ['polling'] : ['polling', 'websocket'],
+  allowUpgrades: !pollingOnly,
   maxHttpBufferSize: 8e3,
-  pingTimeout: 60000,
-  pingInterval: 25000,
+  pingTimeout: pollingOnly ? 120000 : 60000,
+  pingInterval: pollingOnly ? 30000 : 25000,
+  connectionStateRecovery: pollingOnly
+    ? { maxDisconnectionDuration: 3 * 60 * 1000, skipMiddlewares: true }
+    : undefined,
 });
 
 io.use((socket, next) => {

@@ -169,7 +169,22 @@ import {
     elements.statusDot.style.background = color;
   }
 
+  let awayStatusTimer = null;
+  let connectErrorNotified = false;
+
   function updateStatus(text, color = '#c9a227') {
+    if (text === 'Away') {
+      clearTimeout(awayStatusTimer);
+      awayStatusTimer = window.setTimeout(() => {
+        if (!state.socket?.connected) {
+          elements.statusText.textContent = 'Away';
+          pulseStatusDot(color);
+          elements.statusDot?.closest('.live-tag')?.classList.remove('is-live');
+        }
+      }, 4000);
+      return;
+    }
+    clearTimeout(awayStatusTimer);
     elements.statusText.textContent = text;
     pulseStatusDot(color);
     elements.statusDot?.closest('.live-tag')?.classList.toggle('is-live', color === '#8fae98');
@@ -1138,6 +1153,7 @@ import {
       showAccessGate();
     });
     state.socket.on('connect', () => {
+      connectErrorNotified = false;
       updateStatus('Live', '#8fae98');
       state.socket.emit('requestRoomList');
       const saved = readSession();
@@ -1153,7 +1169,10 @@ import {
 
     state.socket.on('connect_error', (err) => {
       updateStatus('Offline', '#c98b8b');
-      showToast('Cannot reach chat server. Check connection or try again shortly.', 'error');
+      if (!connectErrorNotified) {
+        connectErrorNotified = true;
+        showToast('Cannot reach chat server. Check connection or try again shortly.', 'error');
+      }
       console.error('Socket connect_error:', err?.message || err);
     });
     state.socket.on('disconnect', () => updateStatus('Away', '#c98b8b'));
