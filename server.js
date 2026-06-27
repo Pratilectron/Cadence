@@ -100,16 +100,11 @@ function isSensitivePath(urlPath) {
 }
 
 mkdirSync(DATA_DIR, { recursive: true });
-initUsersStore();
 
 const sessions = new Map();
 const rateLimits = new Map();
 
 const rooms = {};
-for (const roomName of cfg().defaultRooms) {
-  rooms[roomName] = createRoom(roomName, 'public');
-  rooms[roomName].name = roomName;
-}
 
 function createRoom(name, type, ownerId = null) {
   const room = {
@@ -1572,10 +1567,22 @@ function startServer() {
   });
 }
 
+async function bootstrap() {
+  await initUsersStore();
+  for (const roomName of cfg().defaultRooms) {
+    rooms[roomName] = createRoom(roomName, 'public');
+    rooms[roomName].name = roomName;
+  }
+  startServer();
+}
+
 setupProcessHandlers({ httpServer, io, appName: cfg().appName });
 module.exports = httpServer;
 
 const shouldAutoStart = require.main === module || Boolean(process.env.PASSENGER_APP_ENV);
 if (shouldAutoStart) {
-  startServer();
+  bootstrap().catch((err) => {
+    console.error('[Cadence] failed to start:', err);
+    process.exit(1);
+  });
 }
