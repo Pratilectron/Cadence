@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="description" content="Sign in to Cadence or continue as a guest" />
+  <meta name="theme-color" content="#0a0908" />
+  <title>Cadence — Enter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&family=Syne:wght@400;600;800&display=swap" rel="stylesheet" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body class="gate-page gate-page-body">
+  <div class="ambient" aria-hidden="true">
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+    <div class="orb orb-c"></div>
+    <div class="grain"></div>
+  </div>
+
+  <main class="gate-page-main">
+    <div class="gate-sheet gate-page-sheet">
+      <div class="gate-page-brand">
+        <img src="/logo.svg" alt="" width="44" height="44" />
+        <div>
+          <p class="brand-name">Cadence</p>
+          <p class="brand-tag">live conversation</p>
+        </div>
+      </div>
+
+      <button type="button" class="link-btn gate-switch" id="auth-mode-button" hidden>Create account</button>
+
+      <p class="gate-kicker" id="gate-kicker">Welcome</p>
+      <h1 class="gate-page-title" id="auth-title">Sign in</h1>
+      <p class="gate-copy" id="gate-copy">Private rooms, pins, and uploads — or browse public rooms as a guest.</p>
+      <p class="form-error gate-page-status" id="gate-status" role="status" hidden></p>
+
+      <form class="gate-form" id="auth-form">
+        <label>
+          <span>Username</span>
+          <input id="auth-username" maxlength="32" autocomplete="username" required />
+        </label>
+        <label>
+          <span>Password</span>
+          <input id="auth-password" type="password" minlength="8" autocomplete="current-password" required />
+        </label>
+        <button type="submit" class="pill-btn pill-accent pill-wide" id="auth-submit">Sign in</button>
+        <p class="form-error" id="auth-error" role="alert"></p>
+      </form>
+
+      <div class="gate-divider" id="guest-divider" hidden><span>or</span></div>
+
+      <div class="guest-name-block" id="guest-name-block" hidden>
+        <label class="guest-name-label">
+          <span>Guest name</span>
+          <div class="guest-name-row">
+            <input id="guest-name-input" maxlength="24" autocomplete="nickname" placeholder="Your name in chat" />
+            <button type="button" class="pill-btn" id="guest-random-name" title="Random name">🎲</button>
+          </div>
+        </label>
+        <button type="button" class="pill-btn pill-wide gate-guest-btn" id="guest-continue">Continue as guest</button>
+        <p class="gate-copy gate-guest-note" id="guest-note">Guest preview is limited. Sign in to read full history, upload, and join private rooms.</p>
+      </div>
+    </div>
+  </main>
+
+  <script src="/socket.io/socket.io.min.js"></script>
+  <script type="module" src="/js/gate.js"></script>
+</body>
+</html>

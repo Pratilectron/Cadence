@@ -13,13 +13,6 @@
   <link rel="stylesheet" href="/css/app.css" />
 </head>
 <body>
-  <div class="ambient" aria-hidden="true">
-    <div class="orb orb-a"></div>
-    <div class="orb orb-b"></div>
-    <div class="orb orb-c"></div>
-    <div class="grain"></div>
-  </div>
-
   <div class="app-shell">
     <header class="masthead">
       <div class="brand">
@@ -34,8 +27,9 @@
           <span class="live-dot" id="status-dot"></span>
           <span id="status-text">Connecting</span>
         </span>
-        <button type="button" class="link-btn" id="logout-btn" hidden>Leave</button>
-        <a href="/admin.html" class="link-btn" id="admin-link" hidden>Admin</a>
+        <button type="button" class="link-btn" id="signin-btn">Sign in</button>
+        <button type="button" class="link-btn" id="logout-btn" hidden>Sign out</button>
+        <a href="/admin" class="link-btn" id="admin-link" hidden>Admin</a>
       </div>
     </header>
 
@@ -73,6 +67,7 @@
           </div>
         </header>
         <div class="chat-stream scrollbar" id="messages" role="log" aria-live="polite" aria-relevant="additions"></div>
+        <div class="compose-zone" id="compose-zone">
         <div class="compose-toolbar">
           <button type="button" class="tool-btn" id="attach-btn" title="Attach file">📎</button>
           <button type="button" class="tool-btn" id="record-btn" title="Screen record">⏺</button>
@@ -97,6 +92,7 @@
             <button type="button" class="pill-btn pill-wide" id="upload-emoji-btn">Upload emoji / GIF</button>
             <input type="file" id="custom-emoji-input" hidden accept="image/*,.gif" />
           </div>
+        </div>
         </div>
       </section>
 
@@ -205,12 +201,24 @@
       </div>
       <div class="profile-panel" id="profile-tab-settings">
         <div class="profile-toggle-row">
-          <span>Message sounds</span>
+          <span>Incoming message sounds</span>
           <input type="checkbox" id="pref-sound" />
+        </div>
+        <div class="profile-toggle-row">
+          <span>Send message sounds</span>
+          <input type="checkbox" id="pref-send-sound" />
         </div>
         <div class="profile-toggle-row">
           <span>Activity sounds</span>
           <input type="checkbox" id="pref-activity-sound" />
+        </div>
+        <div class="profile-toggle-row">
+          <span>Tab title alerts</span>
+          <input type="checkbox" id="pref-title-alerts" />
+        </div>
+        <div class="profile-toggle-row">
+          <span>Desktop notifications</span>
+          <input type="checkbox" id="pref-desktop" />
         </div>
         <div class="profile-toggle-row">
           <span>Show message timestamps</span>
@@ -239,24 +247,104 @@
     </div>
   </dialog>
 
-  <dialog class="gate" id="auth-dialog" aria-labelledby="auth-title">
-    <div class="gate-sheet">
-      <button type="button" class="link-btn gate-switch" id="auth-mode-button">Create account</button>
-      <p class="gate-kicker">Cadence</p>
-      <h2 id="auth-title">Sign in</h2>
-      <p class="gate-copy">Private rooms, pins, invites — one quiet login.</p>
-      <form class="gate-form" id="auth-form">
+  <dialog class="gate gate-access-dialog" id="access-gate-dialog" aria-labelledby="gate-auth-title">
+    <div class="gate-sheet gate-access-sheet">
+      <header class="gate-access-brand">
+        <img src="/logo.svg" alt="" width="40" height="40" />
+        <div>
+          <p class="brand-name">Cadence</p>
+          <p class="brand-tag">live conversation</p>
+        </div>
+      </header>
+
+      <h2 class="gate-access-title" id="gate-auth-title">Sign in</h2>
+      <p class="gate-copy gate-access-lead" id="gate-gate-copy">Private rooms, pins, and uploads — or browse public rooms as a guest.</p>
+      <p class="form-error gate-page-status" id="gate-gate-status" role="status" hidden></p>
+
+      <form class="gate-form gate-access-form" id="gate-auth-form">
         <label>
           <span>Username</span>
-          <input id="auth-username" maxlength="32" autocomplete="username" required />
+          <input id="gate-auth-username" maxlength="32" autocomplete="username" required />
         </label>
         <label>
           <span>Password</span>
-          <input id="auth-password" type="password" minlength="8" autocomplete="current-password" required />
+          <input id="gate-auth-password" type="password" minlength="8" autocomplete="current-password" required />
         </label>
-        <button type="submit" class="pill-btn pill-accent pill-wide" id="auth-submit">Sign in</button>
-        <p class="form-error" id="auth-error" role="alert"></p>
+        <button type="submit" class="pill-btn pill-accent pill-wide" id="gate-auth-submit">Sign in</button>
+        <p class="form-error" id="gate-auth-error" role="alert"></p>
       </form>
+
+      <button type="button" class="gate-mode-switch" id="gate-auth-mode-button" hidden>Need an account? Create one</button>
+
+      <div class="gate-guest-zone" id="gate-guest-zone" hidden>
+        <div class="gate-divider gate-access-divider" id="gate-guest-divider" aria-hidden="true"><span>or</span></div>
+        <section class="gate-guest-panel" id="gate-guest-name-block">
+          <form class="gate-form gate-guest-form" id="gate-guest-form" onsubmit="return false">
+            <label>
+              <span>Guest name</span>
+              <div class="guest-name-row">
+                <input id="gate-guest-name-input" maxlength="24" autocomplete="nickname" placeholder="Your name in chat" />
+                <button type="button" class="pill-btn guest-random-btn" id="gate-guest-random-name" title="Random name" aria-label="Random name">🎲</button>
+              </div>
+            </label>
+          </form>
+          <button type="button" class="pill-btn pill-wide gate-guest-btn" id="gate-guest-continue">Continue as guest</button>
+          <p class="gate-copy gate-guest-note">Guest preview is limited. Sign in for full history, uploads, and private rooms.</p>
+        </section>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="gate" id="guest-settings-dialog" aria-labelledby="guest-settings-title">
+    <div class="gate-sheet">
+      <button type="button" class="link-btn gate-close" id="guest-settings-close">✕</button>
+      <h2 id="guest-settings-title">Guest settings</h2>
+      <p class="gate-copy">Tune alerts and choose how you appear in public rooms.</p>
+      <label class="profile-field">
+        <span>Display name</span>
+        <div class="guest-name-row">
+          <input id="guest-chat-name" maxlength="24" autocomplete="nickname" />
+          <button type="button" class="pill-btn" id="guest-chat-random" title="Random name">🎲</button>
+        </div>
+      </label>
+      <div class="profile-toggle-row">
+        <span>Incoming message sounds</span>
+        <input type="checkbox" id="guest-pref-sound" />
+      </div>
+      <div class="profile-toggle-row">
+        <span>Send message sounds</span>
+        <input type="checkbox" id="guest-pref-send-sound" />
+      </div>
+      <div class="profile-toggle-row">
+        <span>Tab title alerts</span>
+        <input type="checkbox" id="guest-pref-title" />
+      </div>
+      <button type="button" class="pill-btn pill-accent pill-wide" id="guest-settings-save">Save</button>
+      <button type="button" class="pill-btn pill-wide" id="guest-settings-signin">Sign in for full access</button>
+    </div>
+  </dialog>
+
+  <dialog class="gate upload-dialog" id="upload-dialog" aria-labelledby="upload-dialog-title">
+    <div class="gate-sheet upload-sheet">
+      <p class="gate-kicker">Upload</p>
+      <h2 id="upload-dialog-title">Sending file</h2>
+      <p class="upload-file-name" id="upload-file-name"></p>
+      <p class="upload-stage-label" id="upload-stage-label">Preparing…</p>
+      <div class="upload-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="upload-progress-bar" id="upload-progress-bar"></div>
+      </div>
+      <p class="upload-detail" id="upload-detail"></p>
+    </div>
+  </dialog>
+
+  <dialog class="gate moderation-dialog" id="moderation-dialog" aria-labelledby="moderation-title">
+    <div class="gate-sheet moderation-sheet">
+      <p class="gate-kicker moderation-kicker">Content policy</p>
+      <h2 id="moderation-title">Upload blocked</h2>
+      <p class="gate-copy" id="moderation-message"></p>
+      <p class="moderation-strikes" id="moderation-strikes" hidden></p>
+      <p class="moderation-lockout" id="moderation-lockout" hidden></p>
+      <button type="button" class="pill-btn pill-accent pill-wide" id="moderation-ok">Understood</button>
     </div>
   </dialog>
 

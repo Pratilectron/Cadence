@@ -5,6 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "stop": "node scripts/free-port.js",
+    "restart": "node scripts/restart.js",
     "dev": "node --watch server.js",
     "test": "node scripts/smoke-test.js",
     "check-secrets": "node scripts/check-secrets.js",
@@ -14,9 +16,12 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
     "better-sqlite3": "^12.11.1",
     "busboy": "^1.6.0",
     "dotenv": "^17.4.2",
+    "nsfwjs": "^4.3.0",
+    "sharp": "^0.35.2",
     "socket.io": "^4.7.5"
   }
 }

@@ -3,8 +3,49 @@ const { io } = require(join(__dirname, '..', 'node_modules/socket.io/client-dist
 
 const BASE_URL = process.env.TEST_URL || `http://127.0.0.1:${process.env.PORT || 3000}`;
 
+const cookies = new Map();
+
+function mergeCookies(res) {
+  const lines = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : [];
+  const single = res.headers.get('set-cookie');
+  const all = lines.length ? lines : (single ? [single] : []);
+  for (const line of all) {
+    const part = line.split(';')[0];
+    const eq = part.indexOf('=');
+    if (eq > 0) cookies.set(part.slice(0, eq), part.slice(eq + 1));
+  }
+}
+
+function cookieHeader() {
+  if (!cookies.size) return {};
+  return { Cookie: [...cookies.entries()].map(([k, v]) => `${k}=${v}`).join('; ') };
+}
+
+async function ensureGuestGate() {
+  const statusRes = await fetch(`${BASE_URL}/api/gate/status`, { headers: cookieHeader() });
+  mergeCookies(statusRes);
+  const status = await statusRes.json().catch(() => ({}));
+  if (status.granted) return;
+
+  const guestRes = await fetch(`${BASE_URL}/api/gate/guest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...cookieHeader() },
+    body: JSON.stringify({ displayName: 'SmokeTester' }),
+  });
+  mergeCookies(guestRes);
+  if (!guestRes.ok) {
+    const data = await guestRes.json().catch(() => ({}));
+    throw new Error(data.error || 'Could not obtain guest gate access.');
+  }
+}
+
 function client() {
-  return io(BASE_URL, { transports: ['websocket'] });
+  return io(BASE_URL, {
+    transports: ['websocket'],
+    extraHeaders: cookieHeader(),
+  });
 }
 
 function once(socket, event, timeout = 8000) {
@@ -23,6 +64,7 @@ async function register(socket, tag) {
 }
 
 async function run() {
+  await ensureGuestGate();
   const results = [];
 
   {
@@ -61,6 +103,7 @@ async function run() {
       headers: {
         Authorization: `Bearer ${auth.token}`,
         'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        ...cookieHeader(),
       },
       body,
     });
@@ -78,13 +121,13 @@ async function run() {
   }
 
   {
-    const res = await fetch(`${BASE_URL}/api/logs?room=General&limit=5`);
+    const res = await fetch(`${BASE_URL}/api/logs?room=General&limit=5`, { headers: cookieHeader() });
     const data = await res.json();
     results.push(['activity logs', Array.isArray(data.logs) && data.logs.length > 0]);
   }
 
   {
-    const res = await fetch(`${BASE_URL}/api/storage`);
+    const res = await fetch(`${BASE_URL}/api/storage`, { headers: cookieHeader() });
     const data = await res.json();
     results.push(['storage stats', data.maxBytes === 20 * 1024 ** 3]);
   }

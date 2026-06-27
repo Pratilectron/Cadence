@@ -127,6 +127,7 @@ Set these in DirectAdmin → **Setup Node.js App** → **Environment variables**
 - `.env` is optional locally via `dotenv`; production values should live in the hosting panel.
 - Persistent data lives in **`data/cadence.db`** (SQLite) plus upload files — ensure `data/` is writable.
 - Health check: `GET /api/health`
+- **Content moderation:** NSFWJS scans images and screen-record frames client-side; server re-checks image uploads (`NSFW_ENABLED` in env)
 - WebSockets (`/socket.io`) must be enabled on your web server (Apache `mod_proxy_wstunnel` or equivalent).
 
 ## Stack

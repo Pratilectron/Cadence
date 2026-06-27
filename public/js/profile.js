@@ -71,9 +71,12 @@ export function fillProfileForm(profile, els) {
   els.memberSince.textContent = formatMemberSince(profile.createdAt);
   els.displayName.value = profile.displayName || '';
   els.bio.value = profile.bio || '';
-  els.prefSound.checked = profile.preferences.soundEnabled;
-  els.prefActivitySound.checked = profile.preferences.activitySounds;
-  els.prefTimestamps.checked = profile.preferences.showTimestamps;
+  els.prefSound.checked = profile.preferences.soundEnabled !== false;
+  if (els.prefSendSound) els.prefSendSound.checked = profile.preferences.sendSoundEnabled !== false;
+  els.prefActivitySound.checked = profile.preferences.activitySounds !== false;
+  if (els.prefTitleAlerts) els.prefTitleAlerts.checked = profile.preferences.titleNotifications !== false;
+  if (els.prefDesktop) els.prefDesktop.checked = Boolean(profile.preferences.desktopNotifications);
+  els.prefTimestamps.checked = profile.preferences.showTimestamps !== false;
   renderProfileStats(els.stats, profile.stats, els.formatBytes);
   renderProfileData(els.dataList, profile);
 }

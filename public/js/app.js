@@ -4,16 +4,55 @@ import { renderRolesPanel, can } from './roles-ui.js';
 import { bindImageClick } from './viewer.js';
 import { openRecorder } from './recorder.js';
 import {
+  loadPublicConfig,
+  checkVideoFile,
+  notifyModerationBlock,
+  MODERATION_BLOCK_MESSAGE,
+} from './nsfw-guard.js';
+import {
+  initAccessGate,
+  showAccessGate,
+} from './access-gate.js';
+import {
+  persistSession,
+  readSession,
+  clearSession,
+  clearGateAccess,
+} from './session.js';
+import {
+  loadLocalPreferences,
+  saveLocalPreferences,
+  readGuestName,
+  persistGuestName,
+  DEFAULT_PREFS,
+} from './preferences.js';
+import {
+  playReceiveSound,
+  playSendSound,
+  playActivitySound,
+  startTitlePulse,
+  updateDocumentTitle,
+  notifyDesktop,
+  primeAudioOnGesture,
+} from './chat-ux.js';
+import { randomGuestName, sanitizeGuestNameInput } from './guest-names.js';
+import {
   avatarLetter,
   apiProfile,
   bindProfileTabs,
   fillProfileForm,
 } from './profile.js';
+import {
+  initUploadUi,
+  showUploadProgress,
+  updateUploadProgress,
+  hideUploadProgress,
+  uploadWithProgress,
+} from './upload-ui.js';
 
 (() => {
   'use strict';
 
-  const SESSION_KEY = 'cadence_session';
   const SIDEBAR_KEY = 'cadence_sidebar';
   const PANEL_KEY = 'cadence_panel';
   const motionOk = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -24,7 +63,6 @@ import {
     sessionToken: null,
     activeRoom: 'General',
     activeRoomType: 'public',
-    authMode: 'login',
     unread: Object.create(null),
     lastRoomList: [],
     messageIds: new Set(),
@@ -33,11 +71,14 @@ import {
     roomRoles: null,
     myPermissions: {},
     profile: null,
-    preferences: {
-      soundEnabled: true,
-      activitySounds: true,
-      showTimestamps: true,
-    },
+    isGuest: true,
+    appName: 'Cadence',
+    lastSender: '',
+    guestHiddenCount: 0,
+    preferences: { ...DEFAULT_PREFS },
+    appStarted: false,
+    gateMode: null,
+    lastHistory: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -68,17 +109,22 @@ import {
     profileAvatar: $('profile-avatar'),
     profileDialog: $('profile-dialog'),
     profileClose: $('profile-close'),
-    logoutBtn: $('logout-btn'),
     adminLink: $('admin-link'),
-    authDialog: $('auth-dialog'),
-    authForm: $('auth-form'),
-    authModeButton: $('auth-mode-button'),
-    authTitle: $('auth-title'),
-    authSubmit: $('auth-submit'),
-    authUsername: $('auth-username'),
-    authPassword: $('auth-password'),
-    authError: $('auth-error'),
+    signinBtn: $('signin-btn'),
+    logoutBtn: $('logout-btn'),
     toastStack: $('toast-stack'),
+    moderationDialog: $('moderation-dialog'),
+    moderationTitle: $('moderation-title'),
+    moderationMessage: $('moderation-message'),
+    moderationStrikes: $('moderation-strikes'),
+    moderationLockout: $('moderation-lockout'),
+    moderationOk: $('moderation-ok'),
+    guestSettingsDialog: $('guest-settings-dialog'),
+    guestSettingsClose: $('guest-settings-close'),
+    guestChatName: $('guest-chat-name'),
+    guestChatRandom: $('guest-chat-random'),
+    guestSettingsSave: $('guest-settings-save'),
+    guestSettingsSignin: $('guest-settings-signin'),
     attachBtn: $('attach-btn'),
     emojiBtn: $('emoji-btn'),
     fileInput: $('file-input'),
@@ -109,16 +155,11 @@ import {
   }
 
   function initAmbient() {
-    if (!motionOk) return;
-    animate('.orb-a', { x: [0, 40, -20, 0], y: [0, 30, -10, 0], scale: [1, 1.08, 0.96, 1] }, { duration: 22, repeat: Infinity, easing: 'ease-in-out' });
-    animate('.orb-b', { x: [0, -50, 20, 0], y: [0, -30, 15, 0], scale: [1, 0.92, 1.06, 1] }, { duration: 26, repeat: Infinity, easing: 'ease-in-out' });
-    animate('.orb-c', { x: [0, 25, -35, 0], y: [0, -20, 25, 0] }, { duration: 18, repeat: Infinity, easing: 'ease-in-out' });
+    // Background effects removed for performance.
   }
 
   function introReveal() {
-    if (!motionOk) return;
-    animate('.masthead', { opacity: [0, 1], y: [-12, 0] }, { duration: 0.6, easing: spring() });
-    animate('.folio', { opacity: [0, 1], y: [28, 0] }, { delay: stagger(0.1, { start: 0.15 }), duration: 0.65, easing: spring() });
+    // One-shot layout animations disabled — they competed with header interaction.
   }
 
   function pulseStatusDot(color) {
@@ -130,6 +171,7 @@ import {
   function updateStatus(text, color = '#c9a227') {
     elements.statusText.textContent = text;
     pulseStatusDot(color);
+    elements.statusDot?.closest('.live-tag')?.classList.toggle('is-live', color === '#8fae98');
   }
 
   function escapeText(value) {
@@ -154,6 +196,8 @@ import {
       'user.disconnected': `${who} left${row.meta?.sessionDurationMs ? ` (online ${Math.round(row.meta.sessionDurationMs / 60000)}m)` : ''}`,
       'user.login': `${who} signed in`,
       'user.logout': `${who} signed out`,
+      'moderation.blocked': `${who} — policy warning ${row.meta?.strikes || '?'}/${row.meta?.maxStrikes || '?'}`,
+      'moderation.lockout': `${who} — suspended ${row.meta?.lockoutMinutes || 10} min`,
       'user.registered': `${who} registered`,
       'room.joined': `${who} joined`,
       'room.left': `${who} left${row.meta?.durationSec ? ` (stayed ${row.meta.durationSec}s)` : ''}`,
@@ -184,44 +228,130 @@ import {
     } catch { /* ignore */ }
   }
 
-  function showAuthDialog() {
-    if (typeof elements.authDialog.showModal === 'function') elements.authDialog.showModal();
-    const sheet = elements.authDialog.querySelector('.gate-sheet');
-    motion(sheet, { opacity: [0, 1], scale: [0.94, 1], y: [20, 0] }, { duration: 0.5, easing: spring() });
-    elements.authUsername.focus();
-  }
-
-  function hideAuthDialog() {
-    if (!elements.authDialog.open) return;
-    const sheet = elements.authDialog.querySelector('.gate-sheet');
-    if (motionOk) {
-      animate(sheet, { opacity: [1, 0], scale: [1, 0.96], y: [0, 10] }, { duration: 0.28 }).finished.then(() => elements.authDialog.close());
-    } else {
-      elements.authDialog.close();
+  function updateAuthChrome() {
+    const signedIn = Boolean(state.user);
+    if (elements.logoutBtn) elements.logoutBtn.hidden = !signedIn;
+    if (elements.signinBtn) elements.signinBtn.hidden = signedIn;
+    if (elements.adminLink) {
+      elements.adminLink.hidden = !signedIn || !state.user?.isSuperAdmin;
     }
   }
 
-  function setAuthMode(mode) {
-    state.authMode = mode;
-    const isLogin = mode === 'login';
-    elements.authTitle.textContent = isLogin ? 'Sign in' : 'Create account';
-    elements.authSubmit.textContent = isLogin ? 'Sign in' : 'Register';
-    elements.authModeButton.textContent = isLogin ? 'Create account' : 'Sign in';
-    elements.authPassword.autocomplete = isLogin ? 'current-password' : 'new-password';
-    elements.authError.textContent = '';
+  async function leaveToGate(query = 'signedout=1') {
+    clearSession();
+    state.profile = null;
+    state.user = null;
+    state.sessionToken = null;
+    state.appStarted = false;
+    state.gateMode = null;
+    if (state.socket) {
+      state.socket.disconnect();
+      state.socket = null;
+    }
+    updateUserChip('Guest');
+    updateAuthChrome();
+    if (elements.adminLink) elements.adminLink.hidden = true;
+    elements.inviteBtn.hidden = true;
+    await clearGateAccess();
+    const detail = {};
+    if (query.includes('signedout')) detail.signedOut = true;
+    if (query.includes('locked')) detail.locked = true;
+    await showAccessGate(detail);
   }
 
-  function showToast(text, type = 'info', ttl = 4200) {
+  function dismissToast(toast) {
+    if (!toast?.isConnected) return;
+    if (motionOk) {
+      animate(toast, { opacity: [1, 0], x: [0, 10] }, { duration: 0.25 }).finished.then(() => toast.remove());
+    } else {
+      toast.remove();
+    }
+  }
+
+  function showToast(text, type = 'info', ttl = 8000) {
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
-    toast.textContent = text;
+    toast.setAttribute('role', 'status');
+
+    const msg = document.createElement('span');
+    msg.className = 'toast-msg';
+    msg.textContent = text;
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'toast-close';
+    close.setAttribute('aria-label', 'Dismiss notification');
+    close.textContent = '×';
+
+    toast.append(msg, close);
     elements.toastStack.appendChild(toast);
-    motion(toast, { opacity: [0, 1], y: [10, 0] }, { duration: 0.35, easing: spring() });
-    window.setTimeout(() => {
-      if (motionOk) animate(toast, { opacity: [1, 0], y: [0, 8] }, { duration: 0.25 }).finished.then(() => toast.remove());
-      else toast.remove();
-    }, ttl);
+    motion(toast, { opacity: [0, 1], x: [12, 0] }, { duration: 0.35, easing: spring() });
+
+    let timer = window.setTimeout(() => dismissToast(toast), ttl);
+    close.addEventListener('click', () => {
+      window.clearTimeout(timer);
+      dismissToast(toast);
+    });
   }
+
+  let lockoutUiActive = false;
+
+  function showModerationModal(detail = {}) {
+    const message = detail.message || detail.reason || MODERATION_BLOCK_MESSAGE;
+    const lockedOut = Boolean(detail.lockedOut);
+    elements.moderationTitle.textContent = lockedOut ? 'Account suspended' : 'Upload blocked';
+    elements.moderationMessage.textContent = message;
+
+    if (!lockedOut && detail.strikes && detail.maxStrikes) {
+      elements.moderationStrikes.hidden = false;
+      const remaining = detail.remaining ?? Math.max(0, detail.maxStrikes - detail.strikes);
+      const lockoutMinutes = detail.lockoutMinutes || 10;
+      elements.moderationStrikes.textContent = remaining > 0
+        ? `Warning ${detail.strikes} of ${detail.maxStrikes}. ${remaining} more violation${remaining === 1 ? '' : 's'} before a ${lockoutMinutes}-minute sign-out.`
+        : `Warning ${detail.strikes} of ${detail.maxStrikes}.`;
+      elements.moderationLockout.hidden = true;
+    } else if (lockedOut) {
+      elements.moderationStrikes.hidden = true;
+      elements.moderationLockout.hidden = false;
+      const mins = detail.lockoutMinutes || 10;
+      elements.moderationLockout.textContent = `You have been signed out for ${mins} minute${mins === 1 ? '' : 's'}. You cannot sign in again until the suspension ends.`;
+    } else {
+      elements.moderationStrikes.hidden = true;
+      elements.moderationLockout.hidden = true;
+    }
+
+    elements.chatForm?.classList.add('composer-blocked');
+    window.setTimeout(() => elements.chatForm?.classList.remove('composer-blocked'), 600);
+    showModal(elements.moderationDialog);
+  }
+
+  function applyAccountLockout(detail = {}) {
+    if (lockoutUiActive) return;
+    lockoutUiActive = true;
+    clearSession();
+    state.user = null;
+    state.sessionToken = null;
+    state.profile = null;
+    updateUserChip('Guest');
+    updateAuthChrome();
+    if (elements.adminLink) elements.adminLink.hidden = true;
+    elements.inviteBtn.hidden = true;
+    clearGateAccess();
+    showModerationModal({
+      message: detail.message || detail.reason || `Signed out for ${detail.lockoutMinutes || 10} minutes after repeated content policy violations.`,
+      lockedOut: true,
+      lockoutMinutes: detail.lockoutMinutes,
+      lockoutUntil: detail.lockoutUntil,
+      strikes: detail.strikes,
+      maxStrikes: detail.maxStrikes,
+    });
+  }
+
+  document.addEventListener('cadence:moderation-blocked', (event) => {
+    const detail = event.detail || {};
+    if (detail.lockedOut) applyAccountLockout(detail);
+    else showModerationModal(detail);
+  });
 
   function showModal(dialog) {
     if (typeof dialog.showModal !== 'function') return;
@@ -313,12 +443,67 @@ import {
     get prefSound() { return $('pref-sound'); },
     get prefActivitySound() { return $('pref-activity-sound'); },
     get prefTimestamps() { return $('pref-timestamps'); },
+    get prefSendSound() { return $('pref-send-sound'); },
+    get prefTitleAlerts() { return $('pref-title-alerts'); },
+    get prefDesktop() { return $('pref-desktop'); },
     formatBytes,
   };
 
+  function applyPreferences(prefs) {
+    state.preferences = { ...DEFAULT_PREFS, ...prefs };
+    saveLocalPreferences(state.preferences);
+  }
+
+  function totalUnread() {
+    return Object.values(state.unread).reduce((sum, n) => sum + (n || 0), 0);
+  }
+
+  function isOwnMessage(msg) {
+    if (msg.decoy) return false;
+    if (state.user?.id && msg.senderUserId) return msg.senderUserId === state.user.id;
+    if (state.user?.username && msg.senderName) {
+      const name = String(msg.senderName).toLowerCase();
+      const user = state.user.username.toLowerCase();
+      const display = (state.profile?.displayName || '').toLowerCase();
+      if (name === user || (display && name === display)) return true;
+    }
+    return msg.senderId === state.socket?.id;
+  }
+
+  function syncGuestDisplayName() {
+    if (state.user?.id || !state.socket?.connected) return;
+    const name = sanitizeGuestNameInput(readGuestName() || randomGuestName());
+    persistGuestName(name);
+    state.socket.emit('setDisplayName', { name });
+    updateUserChip(name);
+  }
+
+  function openGuestSettings() {
+    elements.guestChatName.value = readGuestName() || state.meName.textContent || randomGuestName();
+    $('guest-pref-sound').checked = state.preferences.soundEnabled !== false;
+    $('guest-pref-send-sound').checked = state.preferences.sendSoundEnabled !== false;
+    $('guest-pref-title').checked = state.preferences.titleNotifications !== false;
+    showModal(elements.guestSettingsDialog);
+  }
+
+  function saveGuestSettings() {
+    const name = sanitizeGuestNameInput(elements.guestChatName.value);
+    persistGuestName(name);
+    applyPreferences({
+      ...state.preferences,
+      soundEnabled: $('guest-pref-sound').checked,
+      sendSoundEnabled: $('guest-pref-send-sound').checked,
+      titleNotifications: $('guest-pref-title').checked,
+    });
+    if (state.socket?.connected) state.socket.emit('setDisplayName', { name });
+    updateUserChip(name);
+    hideModal(elements.guestSettingsDialog);
+    showToast('Guest settings saved', 'success');
+  }
+
   async function openProfileDialog() {
     if (!state.sessionToken) {
-      showAuthDialog();
+      openGuestSettings();
       return;
     }
     try {
@@ -355,15 +540,21 @@ import {
     try {
       const prefs = {
         soundEnabled: profileEls.prefSound.checked,
+        sendSoundEnabled: profileEls.prefSendSound?.checked !== false,
         activitySounds: profileEls.prefActivitySound.checked,
+        titleNotifications: profileEls.prefTitleAlerts?.checked !== false,
+        desktopNotifications: profileEls.prefDesktop?.checked === true,
         showTimestamps: profileEls.prefTimestamps.checked,
       };
-      const { profile } = await apiProfile(state.sessionToken, '/api/profile', {
-        method: 'PATCH',
-        body: JSON.stringify({ preferences: prefs }),
-      });
-      state.profile = profile;
-      state.preferences = { ...state.preferences, ...profile.preferences };
+      applyPreferences(prefs);
+      if (state.sessionToken) {
+        const { profile } = await apiProfile(state.sessionToken, '/api/profile', {
+          method: 'PATCH',
+          body: JSON.stringify({ preferences: prefs }),
+        });
+        state.profile = profile;
+        state.preferences = { ...state.preferences, ...profile.preferences };
+      }
       showToast('Preferences saved', 'success');
     } catch (err) {
       showToast(err.message, 'error');
@@ -436,46 +627,80 @@ import {
     mobilePanels?.setPanel?.('chat');
   }
 
-  function persistSession(token, username) {
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token, username }));
-  }
-
-  function readSession() {
-    try {
-      const raw = sessionStorage.getItem(SESSION_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  }
-
-  function clearSession() {
-    sessionStorage.removeItem(SESSION_KEY);
-    state.sessionToken = null;
-    state.user = null;
-  }
-
   async function uploadFile(file, tag = 'file') {
     if (!state.sessionToken) {
       showToast('Sign in to upload files', 'error');
       return null;
     }
+
+    showUploadProgress({
+      fileName: file.name,
+      stage: file.type.startsWith('video/') ? 'checking' : 'uploading',
+      progress: 0,
+      detail: file.type.startsWith('video/') ? 'Scanning video frames…' : 'Starting upload…',
+    });
+
+    if (file.type.startsWith('video/')) {
+      const videoCheck = await checkVideoFile(file);
+      if (!videoCheck.ok) {
+        hideUploadProgress(0);
+        elements.fileInput.value = '';
+        return null;
+      }
+    }
+
     const form = new FormData();
     form.append('file', file);
-    showToast(`Uploading ${file.name}…`, 'info', 2000);
-    const res = await fetch(`/api/upload?tag=${tag}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${state.sessionToken}` },
-      body: form,
+
+    updateUploadProgress({
+      stage: 'uploading',
+      progress: 0,
+      detail: 'Uploading… 0%',
     });
-    const data = await res.json();
-    if (!res.ok) {
-      showToast(data.error || 'Upload failed', 'error');
+
+    try {
+      const data = await uploadWithProgress(
+        `/api/upload?tag=${encodeURIComponent(tag)}`,
+        form,
+        { Authorization: `Bearer ${state.sessionToken}` },
+        {
+          onUploadProgress(ratio, verifying) {
+            if (verifying) {
+              updateUploadProgress({
+                stage: 'verifying',
+                progress: ratio,
+                detail: 'Checking content policy…',
+              });
+              return;
+            }
+            updateUploadProgress({
+              stage: 'uploading',
+              progress: ratio,
+              detail: `Uploading… ${Math.round(ratio * 100)}%`,
+            });
+          },
+        },
+      );
+
+      updateUploadProgress({ stage: 'finishing', progress: 1, detail: 'Done' });
+      await refreshStorage();
+      if (tag === 'emoji' || tag === 'gif') await refreshCustomEmojis();
+      hideUploadProgress();
+      return data.file;
+    } catch (err) {
+      hideUploadProgress(0);
+      const msg = err.message || err.error || 'Upload failed';
+      if (err.lockedOut || err.strikes) {
+        notifyModerationBlock({ message: msg, ...err });
+      } else if (/content policy|blocked|isn't allowed/i.test(msg)) {
+        notifyModerationBlock({ message: msg });
+      } else {
+        showToast(msg, 'error');
+      }
+      elements.fileInput.value = '';
+      elements.customEmojiInput.value = '';
       return null;
     }
-    await refreshStorage();
-    if (tag === 'emoji' || tag === 'gif') await refreshCustomEmojis();
-    return data.file;
   }
 
   function sendFileMessage(file, caption = '') {
@@ -621,11 +846,16 @@ import {
 
   function renderUserList(users) {
     const fragment = document.createDocumentFragment();
+    const localGuestName = !state.user?.id ? readGuestName() : '';
     users.forEach((user) => {
       const item = document.createElement('div');
       item.className = 'user-item';
       const nameSpan = document.createElement('span');
-      nameSpan.textContent = user.name || 'Anonymous';
+      let label = user.name || 'Guest';
+      if (user.id === state.socket?.id && localGuestName && (label === 'Anonymous' || label === 'Guest')) {
+        label = localGuestName;
+      }
+      nameSpan.textContent = label;
       item.appendChild(nameSpan);
       if (user.role) {
         const roleSpan = document.createElement('span');
@@ -671,12 +901,86 @@ import {
     staggerIn(elements.pinnedList, '.pin-item');
   }
 
+  function renderGuestUnlockCta(hiddenCount) {
+    const wrap = document.createElement('div');
+    wrap.className = 'guest-unlock-cta';
+    const count = hiddenCount || state.guestHiddenCount || 15;
+    wrap.innerHTML = `
+      <p class="guest-unlock-eyebrow">You're only seeing a preview</p>
+      <h3 class="guest-unlock-title">${count > 0 ? `${count} earlier messages hidden` : 'Full history hidden'}</h3>
+      <p class="guest-unlock-copy">Sign in free to read the full conversation, upload files, pin messages, and join private rooms.</p>
+      <div class="guest-unlock-actions">
+        <button type="button" class="pill-btn pill-accent guest-unlock-btn" data-action="signin">Sign in free</button>
+      </div>`;
+    wrap.querySelector('[data-action="signin"]').addEventListener('click', () => showAccessGate());
+    return wrap;
+  }
+
+  function appendDecoyMessage(payload) {
+    const message = document.createElement('article');
+    message.className = 'message them decoy-preview';
+    message.setAttribute('aria-hidden', 'true');
+
+    const body = document.createElement('div');
+    body.className = 'message-body';
+    body.textContent = payload.text || '';
+
+    const meta = document.createElement('div');
+    meta.className = 'message-meta';
+    const sender = document.createElement('span');
+    sender.textContent = payload.senderName || 'Someone';
+    const time = document.createElement('span');
+    time.textContent = state.preferences.showTimestamps ? formatTime(payload.ts) : '';
+    time.hidden = !state.preferences.showTimestamps;
+    meta.append(sender, time);
+    message.append(body, meta);
+    elements.messages.appendChild(message);
+  }
+
+  function renderHistory(payload) {
+    const data = Array.isArray(payload)
+      ? { messages: payload, decoys: [], isGuest: false, hiddenCount: 0 }
+      : (payload || { messages: [], decoys: [], isGuest: false, hiddenCount: 0 });
+
+    state.lastHistory = data;
+    state.isGuest = Boolean(data.isGuest);
+    state.guestHiddenCount = data.hiddenCount || 0;
+    elements.messages.replaceChildren();
+    state.messageIds.clear();
+
+    if (state.isGuest && data.decoys?.length) {
+      data.decoys.forEach((msg) => appendDecoyMessage(msg));
+      elements.messages.appendChild(renderGuestUnlockCta(data.hiddenCount));
+    }
+
+    data.messages.forEach((msg) => {
+      appendMessage(msg, isOwnMessage(msg) ? 'me' : 'them', false);
+    });
+
+    if (state.isGuest) {
+      elements.inviteBtn.hidden = true;
+      if (elements.adminLink) elements.adminLink.hidden = true;
+    }
+
+    staggerIn(elements.messages, '.message:not(.decoy-preview)');
+    elements.messages.scrollTop = elements.messages.scrollHeight;
+  }
+
+  function refreshHistoryAlignment() {
+    if (state.lastHistory) renderHistory(state.lastHistory);
+  }
+
   function appendMessage(payload, type = 'them', shouldAnimate = true) {
+    if (payload.decoy) {
+      appendDecoyMessage(payload);
+      return;
+    }
     if (state.messageIds.has(payload.id)) return;
     state.messageIds.add(payload.id);
 
+    const own = type === 'me' || isOwnMessage(payload);
     const message = document.createElement('article');
-    message.className = `message${type === 'me' ? ' me' : ''}`;
+    message.className = `message${own ? ' me' : ' them'}${shouldAnimate ? ' message-enter' : ''}`;
 
     const body = document.createElement('div');
     body.className = 'message-body';
@@ -686,7 +990,7 @@ import {
     const meta = document.createElement('div');
     meta.className = 'message-meta';
     const sender = document.createElement('span');
-    sender.textContent = payload.senderName || (type === 'me' ? 'You' : 'Guest');
+    sender.textContent = own ? 'You' : (payload.senderName || 'Guest');
     const time = document.createElement('span');
     time.textContent = state.preferences.showTimestamps ? formatTime(payload.ts) : '';
     time.hidden = !state.preferences.showTimestamps;
@@ -694,7 +998,7 @@ import {
     pinButton.type = 'button';
     pinButton.className = 'pin-button';
     pinButton.textContent = 'Pin';
-    pinButton.hidden = !can(state, 'MANAGE_MESSAGES');
+    pinButton.hidden = !can(state, 'MANAGE_MESSAGES') || state.isGuest;
     pinButton.addEventListener('click', () => {
       if (state.socket?.connected && state.user) {
         state.socket.emit('pinMessage', { room: state.activeRoom, messageId: payload.id });
@@ -704,38 +1008,81 @@ import {
     message.append(body, meta);
     elements.messages.appendChild(message);
     elements.messages.scrollTop = elements.messages.scrollHeight;
-    if (shouldAnimate) motion(message, { opacity: [0, 1], y: [18, 0] }, { duration: 0.4, easing: spring() });
+    if (shouldAnimate && motionOk) {
+      motion(message, { opacity: [0, 1], y: [own ? 10 : 18, 0], x: [own ? 12 : -8, 0] }, { duration: 0.42, easing: spring() });
+    }
+  }
+
+  function handleIncomingMessage(msg) {
+    const own = isOwnMessage(msg);
+    if (msg.room && msg.room !== state.activeRoom) {
+      state.unread[msg.room] = (state.unread[msg.room] || 0) + 1;
+      state.lastSender = msg.senderName || 'Someone';
+      if (state.lastRoomList.length) renderRoomList(state.lastRoomList);
+      playReceiveSound(state.preferences.soundEnabled);
+      notifyDesktop({
+        enabled: state.preferences.desktopNotifications,
+        title: `${msg.senderName || 'Someone'} · ${msg.room}`,
+        body: msg.text || 'New message',
+      });
+      showToast(`${msg.senderName} · ${msg.room}`, 'info');
+      updateDocumentTitle({
+        appName: state.appName,
+        unread: totalUnread(),
+        lastSender: state.lastSender,
+      });
+      return;
+    }
+    appendMessage(msg, own ? 'me' : 'them');
+    if (!own) {
+      playReceiveSound(state.preferences.soundEnabled);
+      state.lastSender = msg.senderName || 'Someone';
+      if (document.visibilityState !== 'visible') {
+        notifyDesktop({
+          enabled: state.preferences.desktopNotifications,
+          title: msg.senderName || 'New message',
+          body: msg.text || 'Sent a message',
+        });
+      }
+    }
+    updateDocumentTitle({ appName: state.appName, unread: totalUnread(), lastSender: state.lastSender });
   }
 
   function handleAuthSuccess(data) {
+    lockoutUiActive = false;
+    state.isGuest = false;
     state.user = { id: data.id, username: data.username, isSuperAdmin: data.isSuperAdmin };
     state.sessionToken = data.token;
     persistSession(data.token, data.username);
     updateUserChip(data.displayName || data.username);
-    elements.logoutBtn.hidden = false;
-    if (elements.adminLink) elements.adminLink.hidden = !data.isSuperAdmin;
-    hideAuthDialog();
+    updateAuthChrome();
     showToast(`Welcome, ${data.username}`, 'success');
     refreshStorage();
     refreshCustomEmojis();
     updateInviteButton();
+    fetch('/api/gate/ack', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { Authorization: `Bearer ${data.token}` },
+    }).catch(() => {});
     apiProfile(data.token, '/api/profile').then(({ profile }) => {
       state.profile = profile;
-      state.preferences = { ...state.preferences, ...profile.preferences };
+      applyPreferences({ ...state.preferences, ...profile.preferences });
       updateUserChip(profile.displayName || profile.username);
     }).catch(() => {});
+    if (state.socket?.connected) {
+      state.socket.emit('requestHistory', { room: state.activeRoom });
+    } else {
+      refreshHistoryAlignment();
+    }
   }
 
   function handleLoggedOut() {
-    clearSession();
-    state.profile = null;
     updateUserChip('Guest');
-    elements.logoutBtn.hidden = true;
     if (elements.adminLink) elements.adminLink.hidden = true;
     elements.inviteBtn.hidden = true;
-    setAuthMode('login');
-    showAuthDialog();
     showToast('Signed out', 'info');
+    leaveToGate('signedout=1');
   }
 
   function handleRoomChange(roomName, type) {
@@ -771,48 +1118,64 @@ import {
     elements.chatInput.value = '';
   }
 
+  function buildSocketAuth() {
+    const saved = readSession();
+    if (saved?.token) return { sessionToken: saved.token };
+    return { guestName: readGuestName() || '' };
+  }
+
   function initSocket() {
     state.socket = io({
       // Polling first — many shared hosts block WebSocket upgrades
       transports: ['polling', 'websocket'],
+      auth: buildSocketAuth(),
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
     });
 
+    state.socket.on('gateRequired', () => {
+      state.appStarted = false;
+      showAccessGate();
+    });
     state.socket.on('connect', () => {
       updateStatus('Live', '#8fae98');
-      elements.authError.textContent = '';
       state.socket.emit('requestRoomList');
       const saved = readSession();
-      if (saved?.token) state.socket.emit('restoreSession', { token: saved.token });
+      if (saved?.token) {
+        state.socket.emit('restoreSession', { token: saved.token });
+      } else {
+        state.isGuest = true;
+        syncGuestDisplayName();
+        updateAuthChrome();
+      }
       refreshStorage();
     });
 
     state.socket.on('connect_error', (err) => {
       updateStatus('Offline', '#c98b8b');
-      elements.authError.textContent = 'Cannot reach chat server. Check connection or try again shortly.';
+      showToast('Cannot reach chat server. Check connection or try again shortly.', 'error');
       console.error('Socket connect_error:', err?.message || err);
     });
     state.socket.on('disconnect', () => updateStatus('Away', '#c98b8b'));
     state.socket.on('reconnect_attempt', () => updateStatus('Returning', '#c9a227'));
     state.socket.on('reconnect', () => {
       updateStatus('Live', '#8fae98');
+      state.socket.auth = buildSocketAuth();
       state.socket.emit('requestRoomList');
       const saved = readSession();
       if (saved?.token) state.socket.emit('restoreSession', { token: saved.token });
+      else syncGuestDisplayName();
     });
 
     state.socket.on('authSuccess', handleAuthSuccess);
     state.socket.on('loggedOut', handleLoggedOut);
     state.socket.on('sessionExpired', () => {
-      clearSession();
-      showToast('Session expired', 'error');
-      showAuthDialog();
+      showToast('Session expired — sign in again.', 'error');
+      leaveToGate();
     });
-    state.socket.on('authError', (payload) => {
-      elements.authError.textContent = payload.message || 'Authentication failed.';
-      showToast(payload.message || 'Authentication failed.', 'error');
+    state.socket.on('accountLocked', (payload) => {
+      applyAccountLockout(payload || {});
     });
 
     state.socket.on('roomlist', (rooms) => {
@@ -821,20 +1184,16 @@ import {
       updateInviteButton();
     });
     state.socket.on('userlist', renderUserList);
-    state.socket.on('history', (messages) => {
-      elements.messages.replaceChildren();
-      state.messageIds.clear();
-      messages.forEach((msg) => appendMessage(msg, msg.senderId === state.socket.id ? 'me' : 'them', false));
-      staggerIn(elements.messages, '.message');
+    state.socket.on('displayNameSet', ({ name }) => {
+      updateUserChip(name);
+      persistGuestName(name);
+    });
+
+    state.socket.on('history', (payload) => {
+      renderHistory(payload);
     });
     state.socket.on('message', (msg) => {
-      if (msg.room && msg.room !== state.activeRoom) {
-        state.unread[msg.room] = (state.unread[msg.room] || 0) + 1;
-        if (state.lastRoomList.length) renderRoomList(state.lastRoomList);
-        showToast(`${msg.senderName} · ${msg.room}`, 'info');
-        return;
-      }
-      appendMessage(msg, msg.senderId === state.socket.id ? 'me' : 'them');
+      handleIncomingMessage(msg);
     });
     state.socket.on('pinned', renderPinnedList);
     state.socket.on('roomJoined', ({ roomName, type }) => handleRoomChange(roomName, type));
@@ -875,23 +1234,6 @@ import {
       goToChatPanel();
     });
 
-    elements.authModeButton.addEventListener('click', () => setAuthMode(state.authMode === 'login' ? 'register' : 'login'));
-    elements.authForm.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const username = elements.authUsername.value.trim();
-      const password = elements.authPassword.value;
-      if (!username || !password) {
-        elements.authError.textContent = 'Username and password are required.';
-        return;
-      }
-      if (!state.socket?.connected) {
-        elements.authError.textContent = 'Not connected to server.';
-        return;
-      }
-      elements.authError.textContent = '';
-      state.socket.emit(state.authMode === 'login' ? 'login' : 'register', { username, password });
-    });
-
     elements.createRoomForm.addEventListener('submit', (event) => {
       event.preventDefault();
       const name = elements.roomNameInput.value.trim();
@@ -925,6 +1267,15 @@ import {
       e.preventDefault();
       hideModal(elements.profileDialog);
     });
+    elements.moderationOk?.addEventListener('click', () => {
+      hideModal(elements.moderationDialog);
+      if (lockoutUiActive) leaveToGate('locked=1');
+    });
+    elements.moderationDialog?.addEventListener('cancel', (e) => {
+      e.preventDefault();
+      hideModal(elements.moderationDialog);
+      if (lockoutUiActive) leaveToGate('locked=1');
+    });
     bindProfileTabs(elements.profileDialog);
     $('profile-save')?.addEventListener('click', saveProfileFields);
     $('profile-save-prefs')?.addEventListener('click', saveProfilePreferences);
@@ -954,9 +1305,41 @@ import {
       });
     });
 
+    elements.signinBtn?.addEventListener('click', async () => {
+      clearSession();
+      state.appStarted = false;
+      state.gateMode = null;
+      if (state.socket) {
+        state.socket.disconnect();
+        state.socket = null;
+      }
+      await clearGateAccess();
+      await showAccessGate();
+    });
+    elements.guestSettingsClose?.addEventListener('click', () => hideModal(elements.guestSettingsDialog));
+    elements.guestSettingsSave?.addEventListener('click', saveGuestSettings);
+    elements.guestChatRandom?.addEventListener('click', () => {
+      elements.guestChatName.value = randomGuestName();
+    });
+    elements.guestSettingsSignin?.addEventListener('click', async () => {
+      clearSession();
+      state.appStarted = false;
+      if (state.socket) {
+        state.socket.disconnect();
+        state.socket = null;
+      }
+      await clearGateAccess();
+      hideModal(elements.guestSettingsDialog);
+      await showAccessGate();
+    });
+    elements.guestSettingsDialog?.addEventListener('cancel', (e) => {
+      e.preventDefault();
+      hideModal(elements.guestSettingsDialog);
+    });
+
     elements.logoutBtn.addEventListener('click', () => {
       if (state.socket?.connected) state.socket.emit('logout');
-      else handleLoggedOut();
+      else leaveToGate('signedout=1');
     });
 
     elements.chatForm.addEventListener('submit', (event) => {
@@ -965,6 +1348,7 @@ import {
       if (!text || !state.socket?.connected) return;
       if (!can(state, 'SEND_MESSAGES')) return showToast('Missing permission: Send Messages', 'error');
       state.socket.emit('message', { text, type: 'text' });
+      playSendSound(state.preferences.sendSoundEnabled);
       elements.chatInput.value = '';
     });
 
@@ -1015,10 +1399,6 @@ import {
       if (e.dataTransfer?.files?.length) handleFiles(e.dataTransfer.files, 'file');
     });
 
-    elements.authDialog.addEventListener('cancel', (event) => {
-      if (!state.user) event.preventDefault();
-    });
-
     document.addEventListener('click', (e) => {
       if (!state.pickerOpen) return;
       if (elements.picker.contains(e.target) || elements.emojiBtn.contains(e.target)) return;
@@ -1026,20 +1406,52 @@ import {
     });
   }
 
-  document.addEventListener('DOMContentLoaded', () => {
-    initAmbient();
-    introReveal();
-    initSidebar();
-    mobilePanels = initMobilePanels();
+  function startChatApp() {
+    if (state.appStarted) return;
+    state.appStarted = true;
+    updateAuthChrome();
     initSocket();
     bindEvents();
     renderPicker();
-    setAuthMode('login');
-
-    const saved = readSession();
-    if (saved?.username) elements.authUsername.value = saved.username;
-    if (!saved?.token) showAuthDialog();
     refreshStorage();
     refreshCustomEmojis();
+  }
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    applyPreferences(loadLocalPreferences());
+    primeAudioOnGesture();
+    const pubCfg = await loadPublicConfig();
+    state.appName = pubCfg?.appName || 'Cadence';
+    startTitlePulse(() => ({
+      appName: state.appName,
+      unreadTotal: totalUnread(),
+      lastSender: state.lastSender,
+      titleNotifications: state.preferences.titleNotifications,
+    }));
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        updateDocumentTitle({ appName: state.appName, unread: 0 });
+      }
+    });
+    initAmbient();
+    introReveal();
+    initSidebar();
+    initUploadUi();
+    mobilePanels = initMobilePanels();
+
+    const gateResult = await initAccessGate({
+      onGranted(mode) {
+        state.gateMode = mode;
+        startChatApp();
+      },
+    });
+    if (gateResult.granted) {
+      state.gateMode = gateResult.mode;
+      startChatApp();
+    }
+
+    window.addEventListener('cadence:show-gate', (event) => {
+      showAccessGate(event.detail || {});
+    });
   });
 })();

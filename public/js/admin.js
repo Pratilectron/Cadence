@@ -4,7 +4,7 @@ const $ = (id) => document.getElementById(id);
 
 function getToken() {
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
+    const raw = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
     return raw ? JSON.parse(raw).token : null;
   } catch {
     return null;
