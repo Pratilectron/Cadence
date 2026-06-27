@@ -1,3 +1,7 @@
+require('./lib/module-paths');
+const { checkDependencies } = require('./lib/ensure-deps');
+checkDependencies();
+
 const { createServer } = require('http');
 const { readFileSync, existsSync, mkdirSync, statSync } = require('fs');
 const { join, extname, normalize, posix } = require('path');
@@ -1582,7 +1586,11 @@ module.exports = httpServer;
 const shouldAutoStart = require.main === module || Boolean(process.env.PASSENGER_APP_ENV);
 if (shouldAutoStart) {
   bootstrap().catch((err) => {
-    console.error('[Cadence] failed to start:', err);
+    console.error('[Cadence] failed to start:', err.message || err);
+    if (err.cause) console.error('[Cadence] caused by:', err.cause.message || err.cause);
+    if (err.code === 'MODULE_NOT_FOUND') {
+      console.error('[Cadence] Run NPM Install in your hosting panel, then restart the app.');
+    }
     process.exit(1);
   });
 }

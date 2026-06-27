@@ -101,6 +101,8 @@ npm start
 
 Or restart the app from the DirectAdmin Node.js panel (recommended after deploy).
 
+**Important:** After `git pull`, always click **Run NPM Install** in the Node.js app panel. Cadence needs `sql.js` (and other packages) installed on the server — uploading `node_modules` from Windows will not work.
+
 ### DirectAdmin panel settings
 
 | Setting | Value |
