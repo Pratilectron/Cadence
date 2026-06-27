@@ -5,10 +5,10 @@ import {
 } from './session.js';
 import { persistGuestName } from './preferences.js';
 import { randomGuestName, sanitizeGuestNameInput } from './guest-names.js';
+import { httpLogin, httpRegister, httpRestoreSession } from './auth-http.js';
 
 const fetchOpts = { credentials: 'include' };
 
-let gateSocket = null;
 let authMode = 'login';
 let appConfig = {
   guestChatEnabled: true,
@@ -138,54 +138,8 @@ function hideGateModal() {
   if (gateDialog?.open) gateDialog.close();
 }
 
-function waitForAuthResult(timeoutMs = 15000) {
-  return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => {
-      cleanup();
-      reject(new Error('Request timed out. Try again.'));
-    }, timeoutMs);
-
-    function cleanup() {
-      window.clearTimeout(timer);
-      gateSocket.off('authSuccess', onSuccess);
-      gateSocket.off('authError', onError);
-      gateSocket.off('accountLocked', onLocked);
-      gateSocket.off('sessionExpired', onExpired);
-    }
-
-    function onSuccess(payload) {
-      cleanup();
-      resolve(payload);
-    }
-
-    function onError(payload) {
-      cleanup();
-      reject(new Error(payload?.message || 'Authentication failed.'));
-    }
-
-    function onLocked(payload) {
-      cleanup();
-      reject(new Error(payload?.message || 'Account temporarily suspended.'));
-    }
-
-    function onExpired() {
-      cleanup();
-      reject(new Error('Session expired. Sign in again.'));
-    }
-
-    gateSocket.once('authSuccess', onSuccess);
-    gateSocket.once('authError', onError);
-    gateSocket.once('accountLocked', onLocked);
-    gateSocket.once('sessionExpired', onExpired);
-  });
-}
-
 async function completeGranted(mode) {
   hideGateModal();
-  if (gateSocket?.connected) {
-    gateSocket.disconnect();
-    gateSocket = null;
-  }
   if (onGrantedCallback) await onGrantedCallback(mode);
 }
 
@@ -232,29 +186,6 @@ async function continueAsGuest() {
   }
 }
 
-function initGateSocket() {
-  return new Promise((resolve) => {
-    if (gateSocket?.connected) {
-      resolve();
-      return;
-    }
-    gateSocket = io({ transports: ['polling', 'websocket'] });
-    gateSocket.on('connect', () => {
-      setStatus('');
-      resolve();
-    });
-    gateSocket.on('connect_error', () => {
-      if (gateDialog?.open) {
-        setStatus('Could not reach the server. Try again shortly.', true);
-      }
-    });
-    gateSocket.on('sessionExpired', () => {
-      clearSession();
-      if (gateDialog?.open) resetAuthUi();
-    });
-  });
-}
-
 async function attemptSessionRestore({ silent = false } = {}) {
   const saved = readSession();
   if (!saved?.token) return false;
@@ -266,9 +197,7 @@ async function attemptSessionRestore({ silent = false } = {}) {
   }
 
   try {
-    await initGateSocket();
-    gateSocket.emit('restoreSession', { token: saved.token });
-    const data = await waitForAuthResult();
+    const data = await httpRestoreSession(saved.token);
     await completeAuth(data);
     return true;
   } catch (err) {
@@ -279,18 +208,14 @@ async function attemptSessionRestore({ silent = false } = {}) {
 }
 
 async function submitAuth(username, password) {
-  if (!gateSocket?.connected) {
-    elements.authError.textContent = 'Not connected to server.';
-    return;
-  }
-
   elements.authError.textContent = '';
   elements.authSubmit.disabled = true;
   elements.authSubmit.classList.add('is-loading');
 
   try {
-    socketEmitAuth(username, password);
-    const data = await waitForAuthResult();
+    const data = authMode === 'login'
+      ? await httpLogin(username, password)
+      : await httpRegister(username, password);
     await completeAuth(data);
   } catch (err) {
     clearSession();
@@ -298,10 +223,6 @@ async function submitAuth(username, password) {
     elements.authSubmit.disabled = false;
     elements.authSubmit.classList.remove('is-loading');
   }
-}
-
-function socketEmitAuth(username, password) {
-  gateSocket.emit(authMode === 'login' ? 'login' : 'register', { username, password });
 }
 
 function bindGateEvents() {
@@ -370,7 +291,6 @@ export async function showAccessGate(detail = {}) {
   }
   bindGateEvents();
   showGateModal();
-  await initGateSocket();
   if (!appConfig.moderationLockedOut) {
     await attemptSessionRestore();
   }
@@ -409,7 +329,6 @@ export async function initAccessGate({ onGranted } = {}) {
 
   primeAuthForm();
   showGateModal();
-  await initGateSocket();
   await attemptSessionRestore();
   return { granted: false };
 }

@@ -44,7 +44,8 @@ git config core.hooksPath .githooks
 | `npm run dev` | Run with file watch |
 | `npm test` | Smoke tests |
 | `npm run check-secrets` | Block commits of `.env`, `data/`, keys |
-| `npm run deploy` | Pull latest code, install deps, restart (server) |
+| `npm run deploy` | Pull latest code, install deps, Passenger reload (server) |
+| `npm run restart` | Local dev: free port and start server. On DirectAdmin/Passenger, touches `tmp/restart.txt` instead |
 
 ## Automated updates
 
@@ -95,11 +96,13 @@ On the server after each push to `main`:
 
 ```bash
 git pull origin main
-npm install
-npm start
+npm install --omit=dev
+npm run restart
 ```
 
-Or restart the app from the DirectAdmin Node.js panel (recommended after deploy).
+`npm run restart` on the server only writes `tmp/restart.txt` (Passenger reload). **Do not use `npm start` on DirectAdmin** — Passenger already runs `server.js`.
+
+Or click **Restart** in the DirectAdmin Node.js panel (recommended after deploy).
 
 **Important:** After `git pull`, always click **Run NPM Install** in the Node.js app panel, then **Restart**.
 
@@ -134,7 +137,7 @@ Set these in DirectAdmin → **Setup Node.js App** → **Environment variables**
 | `SUPER_ADMIN_USERNAMES` | `you@example.com` | Admin panel access |
 | `NODE_ENV` | `production` | Recommended for production |
 
-`PORT` is assigned automatically by Passenger — do not hardcode it in code.
+`PORT` is assigned automatically by Passenger — **do not set `PORT` in the panel or `.env` on production**.
 
 ### Notes
 

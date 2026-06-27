@@ -32,7 +32,8 @@ const {
 } = require('./lib/roles');
 const { getConfig, reloadConfig, isSuperAdminUsername } = require('./lib/config');
 const { initUsersStore, loadUsersDb, saveUsersDb, usersDb } = require('./lib/users-store');
-const { DB_FILE } = require('./lib/db');
+const { DB_FILE, initDb } = require('./lib/db');
+const dbReady = initDb();
 const adminLib = require('./lib/admin');
 const { handleAdminApi } = require('./lib/admin-api');
 const { buildProfile, updateProfile } = require('./lib/profile');
@@ -57,6 +58,11 @@ const {
   readGuestLabelCookie,
 } = require('./lib/client-identity');
 const { buildDecoyMessages, sanitizeGuestName } = require('./lib/guest-content');
+const {
+  handleAuthLogin,
+  handleAuthRegister,
+  handleAuthRestore,
+} = require('./lib/auth-http');
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -326,6 +332,41 @@ function activityLog(event, socket, meta = {}) {
   return row;
 }
 
+function logAuthEvent(event, user, req, meta = {}) {
+  return logActivity({
+    event,
+    userId: user?.id || null,
+    username: user?.username || 'Anonymous',
+    room: null,
+    meta: { ...meta, source: 'http' },
+  });
+}
+
+function authHttpContext() {
+  return {
+    config: cfg,
+    readJsonBody,
+    checkRateLimit,
+    sanitizeUsername,
+    findUserByUsername,
+    verifyPassword,
+    getModerationStatus,
+    isSuperAdmin,
+    createSession,
+    logAuthEvent,
+    authPayload,
+    hashPasswordScrypt,
+    isSuperAdminUsername,
+    usersDb,
+    saveUsersDb,
+    crypto,
+    getTokenFromReq,
+    getSessionUser,
+    findUserById,
+    revokeSession,
+  };
+}
+
 function serveFile(res, filePath, cacheHtml = false) {
   const ext = extname(filePath);
   const type = MIME_TYPES[ext] || 'application/octet-stream';
@@ -403,6 +444,8 @@ function serveStatic(req, res, urlPath = req.url.split('?')[0]) {
 }
 
 async function handleHttp(req, res) {
+  await dbReady;
+
   let urlPath = req.url.split('?')[0];
   if (urlPath.length > 1 && urlPath.endsWith('/')) {
     urlPath = urlPath.slice(0, -1);
@@ -469,6 +512,18 @@ async function handleHttp(req, res) {
       moderationLockoutUntil: moderation.lockoutUntil,
     });
     return;
+  }
+
+  if (urlPath === '/api/auth/login') {
+    if (await handleAuthLogin(req, res, jsonResponse, authHttpContext())) return;
+  }
+
+  if (urlPath === '/api/auth/register') {
+    if (await handleAuthRegister(req, res, jsonResponse, authHttpContext())) return;
+  }
+
+  if (urlPath === '/api/auth/restore') {
+    if (await handleAuthRestore(req, res, jsonResponse, authHttpContext())) return;
   }
 
   if (urlPath === '/api/gate/status' && req.method === 'GET') {
@@ -661,8 +716,8 @@ async function handleHttp(req, res) {
   serveStatic(req, res, urlPath);
 }
 
-const httpServer = createServer((req, res) => {
-  if (req.url.startsWith('/socket.io')) return;
+const httpServer = createServer();
+httpServer.on('request', (req, res) => {
   handleHttp(req, res).catch((err) => {
     console.error('HTTP error:', err.message);
     if (!res.headersSent) jsonResponse(res, 500, { error: 'Internal server error.' });
@@ -672,8 +727,12 @@ const httpServer = createServer((req, res) => {
 const io = new Server(httpServer, {
   cors: { origin: cfg().allowedOrigins, methods: ['GET', 'POST'] },
   maxHttpBufferSize: 8e3,
-  pingTimeout: 20000,
-  pingInterval: 10000,
+  pingTimeout: 60000,
+  pingInterval: 25000,
+});
+
+io.use((socket, next) => {
+  dbReady.then(() => next()).catch(next);
 });
 
 function buildRoomListFor(socket) {
@@ -1572,6 +1631,7 @@ function startServer() {
 }
 
 async function bootstrap() {
+  await dbReady;
   await initUsersStore();
   for (const roomName of cfg().defaultRooms) {
     rooms[roomName] = createRoom(roomName, 'public');

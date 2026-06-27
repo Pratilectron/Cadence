@@ -1,6 +1,7 @@
 const { spawnSync, execSync, spawn } = require('child_process');
 const { existsSync, mkdirSync, writeFileSync, appendFileSync } = require('fs');
 const { join } = require('path');
+const { requestPassengerRestart } = require('./passenger-restart');
 
 const ROOT = join(__dirname, '..');
 const BRANCH = process.env.DEPLOY_BRANCH || 'main';
@@ -68,7 +69,7 @@ function main() {
 
   const tmpDir = join(ROOT, 'tmp');
   mkdirSync(tmpDir, { recursive: true });
-  writeFileSync(join(tmpDir, 'restart.txt'), String(Date.now()), 'utf8');
+  requestPassengerRestart(ROOT);
 
   const head = gitRev('HEAD').slice(0, 7);
   log(`complete at ${head}`);

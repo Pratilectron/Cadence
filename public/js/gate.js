@@ -1,5 +1,4 @@
 import {
-  SESSION_KEY,
   CHAT_PATH,
   persistSession,
   readSession,
@@ -7,6 +6,7 @@ import {
 } from './session.js';
 import { persistGuestName } from './preferences.js';
 import { randomGuestName, sanitizeGuestNameInput } from './guest-names.js';
+import { httpLogin, httpRegister, httpRestoreSession } from './auth-http.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -28,7 +28,6 @@ const elements = {
   guestNote: $('guest-note'),
 };
 
-let socket = null;
 let authMode = 'login';
 let enteringChat = false;
 let appConfig = {
@@ -128,48 +127,6 @@ function resetAuthUi(message = '') {
   }
 }
 
-function waitForAuthResult(timeoutMs = 15000) {
-  return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => {
-      cleanup();
-      reject(new Error('Request timed out. Try again.'));
-    }, timeoutMs);
-
-    function cleanup() {
-      window.clearTimeout(timer);
-      socket.off('authSuccess', onSuccess);
-      socket.off('authError', onError);
-      socket.off('accountLocked', onLocked);
-      socket.off('sessionExpired', onExpired);
-    }
-
-    function onSuccess(payload) {
-      cleanup();
-      resolve(payload);
-    }
-
-    function onError(payload) {
-      cleanup();
-      reject(new Error(payload?.message || 'Authentication failed.'));
-    }
-
-    function onLocked(payload) {
-      cleanup();
-      reject(new Error(payload?.message || 'Account temporarily suspended.'));
-    }
-
-    function onExpired() {
-      cleanup();
-      reject(new Error('Session expired. Sign in again.'));
-    }
-
-    socket.once('authSuccess', onSuccess);
-    socket.once('authError', onError);
-    socket.once('accountLocked', onLocked);
-    socket.once('sessionExpired', onExpired);
-  });
-}
-
 async function continueAsGuest() {
   const name = sanitizeGuestNameInput(elements.guestNameInput.value);
   elements.guestNameInput.value = name;
@@ -195,25 +152,6 @@ async function continueAsGuest() {
   }
 }
 
-function initSocket() {
-  return new Promise((resolve) => {
-    socket = io({ transports: ['polling', 'websocket'] });
-
-    socket.on('connect', () => {
-      setStatus('');
-      resolve();
-    });
-    socket.on('connect_error', () => {
-      setStatus('Could not reach the server. Try again shortly.', true);
-    });
-
-    socket.on('sessionExpired', () => {
-      clearSession();
-      resetAuthUi();
-    });
-  });
-}
-
 async function tryRestoreSession() {
   const saved = readSession();
   if (!saved?.token) return false;
@@ -224,8 +162,7 @@ async function tryRestoreSession() {
   elements.guestDivider.hidden = true;
 
   try {
-    socket.emit('restoreSession', { token: saved.token });
-    const data = await waitForAuthResult();
+    const data = await httpRestoreSession(saved.token);
     await completeAuth(data);
     return true;
   } catch (err) {
@@ -236,18 +173,14 @@ async function tryRestoreSession() {
 }
 
 async function submitAuth(username, password) {
-  if (!socket?.connected) {
-    elements.authError.textContent = 'Not connected to server.';
-    return;
-  }
-
   elements.authError.textContent = '';
   elements.authSubmit.disabled = true;
   elements.authSubmit.classList.add('is-loading');
 
   try {
-    socket.emit(authMode === 'login' ? 'login' : 'register', { username, password });
-    const data = await waitForAuthResult();
+    const data = authMode === 'login'
+      ? await httpLogin(username, password)
+      : await httpRegister(username, password);
     await completeAuth(data);
   } catch (err) {
     clearSession();
@@ -301,7 +234,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const saved = readSession();
   if (saved?.username) elements.authUsername.value = saved.username;
 
-  await initSocket();
   bindEvents();
   await tryRestoreSession();
 });
