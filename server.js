@@ -32,8 +32,15 @@ const {
 } = require('./lib/roles');
 const { getConfig, reloadConfig, isSuperAdminUsername } = require('./lib/config');
 const { initUsersStore, loadUsersDb, saveUsersDb, usersDb } = require('./lib/users-store');
-const { DB_FILE, initDb } = require('./lib/db');
+const { DB_FILE, initDb, insertRoomMessage, listRoomMessages, upsertChatClient, listChatClients } = require('./lib/db');
 const dbReady = initDb();
+const {
+  createSession,
+  getSessionUser,
+  revokeSession,
+  revokeAllUserSessions,
+  sessions,
+} = require('./lib/sessions-store');
 const adminLib = require('./lib/admin');
 const { handleAdminApi } = require('./lib/admin-api');
 const { buildProfile, updateProfile } = require('./lib/profile');
@@ -63,6 +70,12 @@ const {
   handleAuthRegister,
   handleAuthRestore,
 } = require('./lib/auth-http');
+const {
+  handleChatHello,
+  handleChatPoll,
+  handleChatMessage,
+  handleChatJoin,
+} = require('./lib/chat-http');
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -111,7 +124,6 @@ function isSensitivePath(urlPath) {
 
 mkdirSync(DATA_DIR, { recursive: true });
 
-const sessions = new Map();
 const rateLimits = new Map();
 
 const rooms = {};
@@ -183,29 +195,38 @@ function sanitizeRoomName(value) {
     .slice(0, 64);
 }
 
-function createSession(userId) {
-  const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, { userId, createdAt: Date.now() });
-  return token;
+function logHttpActivity(event, user, meta = {}) {
+  return logActivity({
+    event,
+    userId: user?.id || null,
+    username: user?.username || meta.username || 'Guest',
+    room: meta.room || null,
+    meta: { ...meta, source: 'http' },
+  });
 }
 
-function getSessionUser(token) {
-  if (!token) return null;
-  const session = sessions.get(token);
-  if (!session) return null;
-  const user = findUserById(session.userId);
-  return user ? { id: user.id, username: user.username } : null;
-}
-
-function revokeSession(token) {
-  if (token) sessions.delete(token);
-}
-
-function revokeAllUserSessions(userId) {
-  if (!userId) return;
-  for (const [token, session] of sessions.entries()) {
-    if (session.userId === userId) sessions.delete(token);
-  }
+function chatHttpContext() {
+  return {
+    cfg,
+    port: PORT,
+    parseRequestUrl,
+    readJsonBody,
+    checkRateLimit,
+    requireHttpGate,
+    getTokenFromReq,
+    getSessionUser,
+    sanitizeRoomName,
+    rooms,
+    listRoomMessages,
+    insertRoomMessage,
+    upsertChatClient,
+    listChatClients,
+    buildMessagePayload,
+    requirePerm,
+    canJoinRoom,
+    userHasPermission,
+    logHttpActivity,
+  };
 }
 
 function forceLogoutUser(userId, payload = {}) {
@@ -524,6 +545,22 @@ async function handleHttp(req, res) {
 
   if (urlPath === '/api/auth/restore') {
     if (await handleAuthRestore(req, res, jsonResponse, authHttpContext())) return;
+  }
+
+  if (urlPath === '/api/chat/hello') {
+    if (await handleChatHello(req, res, jsonResponse, chatHttpContext())) return;
+  }
+
+  if (urlPath === '/api/chat/poll') {
+    if (await handleChatPoll(req, res, jsonResponse, chatHttpContext())) return;
+  }
+
+  if (urlPath === '/api/chat/message') {
+    if (await handleChatMessage(req, res, jsonResponse, chatHttpContext())) return;
+  }
+
+  if (urlPath === '/api/chat/join') {
+    if (await handleChatJoin(req, res, jsonResponse, chatHttpContext())) return;
   }
 
   if (urlPath === '/api/gate/status' && req.method === 'GET') {
@@ -1476,6 +1513,7 @@ io.on('connection', (socket) => {
 
     room.messages.push(payload);
     if (room.messages.length > cfg().maxMessagesPerRoom) room.messages.shift();
+    insertRoomMessage(roomName, payload);
 
     activityLog('message.sent', socket, {
       room: payload.room,
@@ -1655,6 +1693,8 @@ async function bootstrap() {
   for (const roomName of cfg().defaultRooms) {
     rooms[roomName] = createRoom(roomName, 'public');
     rooms[roomName].name = roomName;
+    const stored = listRoomMessages(roomName, { since: 0, limit: cfg().maxMessagesPerRoom });
+    if (stored.length) rooms[roomName].messages = stored;
   }
   startServer();
 }

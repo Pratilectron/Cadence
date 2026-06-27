@@ -14,6 +14,7 @@ import {
   showAccessGate,
 } from './access-gate.js';
 import { createSocketOptions } from './socket-client.js';
+import { createHttpChat } from './chat-http.js';
 import {
   persistSession,
   readSession,
@@ -1140,34 +1141,33 @@ import {
     return { guestName: readGuestName() || '' };
   }
 
-  function initSocket() {
-    state.socket = io(createSocketOptions({
-      auth: buildSocketAuth(),
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-    }));
-
-    state.socket.on('gateRequired', () => {
+  function wireChatHandlers(socket) {
+    socket.on('gateRequired', () => {
       state.appStarted = false;
       showAccessGate();
     });
-    state.socket.on('connect', () => {
+    socket.on('connect', () => {
       connectErrorNotified = false;
       updateStatus('Live', '#8fae98');
-      state.socket.emit('requestRoomList');
-      const saved = readSession();
-      if (saved?.token) {
-        state.socket.emit('restoreSession', { token: saved.token });
+      if (state.chatTransport !== 'http') {
+        socket.emit('requestRoomList');
+        const saved = readSession();
+        if (saved?.token) {
+          socket.emit('restoreSession', { token: saved.token });
+        } else {
+          state.isGuest = true;
+          syncGuestDisplayName();
+          updateAuthChrome();
+        }
       } else {
-        state.isGuest = true;
-        syncGuestDisplayName();
+        state.isGuest = !readSession()?.token;
+        if (state.isGuest) syncGuestDisplayName();
         updateAuthChrome();
       }
       refreshStorage();
     });
 
-    state.socket.on('connect_error', (err) => {
+    socket.on('connect_error', (err) => {
       updateStatus('Offline', '#c98b8b');
       if (!connectErrorNotified) {
         connectErrorNotified = true;
@@ -1175,62 +1175,62 @@ import {
       }
       console.error('Socket connect_error:', err?.message || err);
     });
-    state.socket.on('disconnect', () => updateStatus('Away', '#c98b8b'));
-    state.socket.on('reconnect_attempt', () => updateStatus('Returning', '#c9a227'));
-    state.socket.on('reconnect', () => {
+    socket.on('disconnect', () => updateStatus('Away', '#c98b8b'));
+    socket.on('reconnect_attempt', () => updateStatus('Returning', '#c9a227'));
+    socket.on('reconnect', () => {
       updateStatus('Live', '#8fae98');
-      state.socket.auth = buildSocketAuth();
-      state.socket.emit('requestRoomList');
+      if (socket.auth) socket.auth = buildSocketAuth();
+      socket.emit('requestRoomList');
       const saved = readSession();
-      if (saved?.token) state.socket.emit('restoreSession', { token: saved.token });
+      if (saved?.token) socket.emit('restoreSession', { token: saved.token });
       else syncGuestDisplayName();
     });
 
-    state.socket.on('authSuccess', handleAuthSuccess);
-    state.socket.on('loggedOut', handleLoggedOut);
-    state.socket.on('sessionExpired', () => {
+    socket.on('authSuccess', handleAuthSuccess);
+    socket.on('loggedOut', handleLoggedOut);
+    socket.on('sessionExpired', () => {
       showToast('Session expired — sign in again.', 'error');
       leaveToGate();
     });
-    state.socket.on('accountLocked', (payload) => {
+    socket.on('accountLocked', (payload) => {
       applyAccountLockout(payload || {});
     });
 
-    state.socket.on('roomlist', (rooms) => {
+    socket.on('roomlist', (rooms) => {
       state.lastRoomList = rooms;
       renderRoomList(rooms);
       updateInviteButton();
     });
-    state.socket.on('userlist', renderUserList);
-    state.socket.on('displayNameSet', ({ name }) => {
+    socket.on('userlist', renderUserList);
+    socket.on('displayNameSet', ({ name }) => {
       updateUserChip(name);
       persistGuestName(name);
     });
 
-    state.socket.on('history', (payload) => {
+    socket.on('history', (payload) => {
       renderHistory(payload);
     });
-    state.socket.on('message', (msg) => {
+    socket.on('message', (msg) => {
       handleIncomingMessage(msg);
     });
-    state.socket.on('pinned', renderPinnedList);
-    state.socket.on('roomJoined', ({ roomName, type }) => handleRoomChange(roomName, type));
-    state.socket.on('roomError', (payload) => showToast(payload?.reason || 'Room error', 'error'));
-    state.socket.on('inviteSuccess', (payload) => {
+    socket.on('pinned', renderPinnedList);
+    socket.on('roomJoined', ({ roomName, type }) => handleRoomChange(roomName, type));
+    socket.on('roomError', (payload) => showToast(payload?.reason || 'Room error', 'error'));
+    socket.on('inviteSuccess', (payload) => {
       elements.inviteNote.textContent = `${payload.username} invited to ${payload.room}.`;
       elements.inviteNote.className = 'form-status';
       showToast(`Invited ${payload.username}`, 'success');
     });
-    state.socket.on('inviteError', (payload) => {
+    socket.on('inviteError', (payload) => {
       elements.inviteNote.textContent = payload.reason || 'Invite failed.';
       elements.inviteNote.className = 'form-error';
       showToast(payload.reason || 'Invite failed.', 'error');
     });
-    state.socket.on('activityHistory', renderActivityLog);
-    state.socket.on('roomRoles', applyRoomRoles);
-    state.socket.on('roleError', (p) => showToast(p.reason || 'Role error', 'error'));
-    state.socket.on('roleSuccess', (p) => showToast(`Role ${p.action}`, 'success'));
-    state.socket.on('activityLog', (row) => {
+    socket.on('activityHistory', renderActivityLog);
+    socket.on('roomRoles', applyRoomRoles);
+    socket.on('roleError', (p) => showToast(p.reason || 'Role error', 'error'));
+    socket.on('roleSuccess', (p) => showToast(`Role ${p.action}`, 'success'));
+    socket.on('activityLog', (row) => {
       if (row.room === state.activeRoom) {
         const item = document.createElement('div');
         item.className = 'activity-item';
@@ -1239,6 +1239,34 @@ import {
         elements.activityLog.prepend(item);
       }
     });
+  }
+
+  async function loadSocketIoClient() {
+    if (window.io) return;
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/socket.io/socket.io.min.js';
+      script.onload = resolve;
+      script.onerror = () => reject(new Error('Socket.IO client failed to load'));
+      document.head.appendChild(script);
+    });
+  }
+
+  async function initChatTransport() {
+    if (state.chatTransport === 'http') {
+      state.socket = createHttpChat();
+      wireChatHandlers(state.socket);
+      await state.socket.connect();
+      return;
+    }
+    await loadSocketIoClient();
+    state.socket = window.io(createSocketOptions({
+      auth: buildSocketAuth(),
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+    }));
+    wireChatHandlers(state.socket);
   }
 
   function bindEvents() {
@@ -1428,7 +1456,7 @@ import {
     if (state.appStarted) return;
     state.appStarted = true;
     updateAuthChrome();
-    initSocket();
+    initChatTransport();
     bindEvents();
     renderPicker();
     refreshStorage();
@@ -1440,6 +1468,7 @@ import {
     primeAudioOnGesture();
     const pubCfg = await loadPublicConfig();
     state.appName = pubCfg?.appName || 'Cadence';
+    state.chatTransport = pubCfg?.chatTransport || 'socket';
     startTitlePulse(() => ({
       appName: state.appName,
       unreadTotal: totalUnread(),
