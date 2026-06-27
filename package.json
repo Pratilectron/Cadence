@@ -10,22 +10,23 @@
     "dev": "node --watch server.js",
     "test": "node scripts/smoke-test.js",
     "check-secrets": "node scripts/check-secrets.js",
+    "check-host": "node scripts/check-host.js",
     "deploy": "node scripts/deploy.js",
-    "postinstall": "node scripts/rebuild-native.js"
+    "vendor:sql": "node scripts/vendor-sql.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "@tensorflow/tfjs": "^4.22.0",
     "busboy": "^1.6.0",
     "dotenv": "^17.4.2",
-    "nsfwjs": "^4.3.0",
-    "sharp": "^0.35.2",
-    "socket.io": "^4.7.5",
-    "sql.js": "^1.14.1"
+    "socket.io": "^4.7.5"
   },
   "optionalDependencies": {
-    "better-sqlite3": "^12.11.1"
+    "@tensorflow/tfjs": "^4.22.0",
+    "better-sqlite3": "^12.11.1",
+    "nsfwjs": "^4.3.0",
+    "sharp": "^0.35.2",
+    "sql.js": "^1.14.1"
   }
 }

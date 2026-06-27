@@ -101,7 +101,11 @@ npm start
 
 Or restart the app from the DirectAdmin Node.js panel (recommended after deploy).
 
-**Important:** After `git pull`, always click **Run NPM Install** in the Node.js app panel. Cadence needs `sql.js` (and other packages) installed on the server — uploading `node_modules` from Windows will not work.
+**Important:** After `git pull`, always click **Run NPM Install** in the Node.js app panel, then **Restart**.
+
+Cadence ships a **bundled SQLite** (`vendor/sql-asm.js`) so the database works even when native modules fail. NPM Install only needs to succeed for `socket.io`, `busboy`, and `dotenv` — heavy packages (`sharp`, `@tensorflow/tfjs`, `nsfwjs`) are optional and enable image moderation when they install.
+
+To diagnose module issues on the server: `npm run check-host`
 
 ### DirectAdmin panel settings
 
