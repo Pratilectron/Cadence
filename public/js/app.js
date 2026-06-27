@@ -13,6 +13,7 @@ import {
   initAccessGate,
   showAccessGate,
 } from './access-gate.js';
+import { createSocketOptions } from './socket-client.js';
 import {
   persistSession,
   readSession,
@@ -1125,14 +1126,12 @@ import {
   }
 
   function initSocket() {
-    state.socket = io({
-      // Polling first — many shared hosts block WebSocket upgrades
-      transports: ['polling', 'websocket'],
+    state.socket = io(createSocketOptions({
       auth: buildSocketAuth(),
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
-    });
+    }));
 
     state.socket.on('gateRequired', () => {
       state.appStarted = false;

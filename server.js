@@ -718,14 +718,27 @@ async function handleHttp(req, res) {
 
 const httpServer = createServer();
 httpServer.on('request', (req, res) => {
+  // Let Socket.IO own /socket.io — do not run the static/API handler on those requests
+  if (req.url?.startsWith('/socket.io')) return;
   handleHttp(req, res).catch((err) => {
     console.error('HTTP error:', err.message);
     if (!res.headersSent) jsonResponse(res, 500, { error: 'Internal server error.' });
   });
 });
 
+const underPassenger = Boolean(process.env.PASSENGER_APP_ENV)
+  || typeof globalThis.PhusionPassenger !== 'undefined';
+
 const io = new Server(httpServer, {
-  cors: { origin: cfg().allowedOrigins, methods: ['GET', 'POST'] },
+  cors: {
+    origin: (origin, callback) => {
+      callback(null, isOriginAllowed(origin));
+    },
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+  transports: underPassenger ? ['polling'] : ['polling', 'websocket'],
+  allowUpgrades: !underPassenger,
   maxHttpBufferSize: 8e3,
   pingTimeout: 60000,
   pingInterval: 25000,

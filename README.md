@@ -147,6 +147,7 @@ Set these in DirectAdmin → **Setup Node.js App** → **Environment variables**
 - Health check: `GET /api/health`
 - **Content moderation:** NSFWJS scans images and screen-record frames client-side; server re-checks image uploads (`NSFW_ENABLED` in env)
 - WebSockets (`/socket.io`) must be enabled on your web server (Apache `mod_proxy_wstunnel` or equivalent).
+- Socket.IO uses **HTTP polling** on Passenger (no WebSocket upgrade). Ship `.htaccess` with `PassengerMaxInstances 1` so session IDs stay on one process.
 
 ## Stack
 
