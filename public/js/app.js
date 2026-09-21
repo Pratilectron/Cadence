@@ -39,11 +39,13 @@ import {
 } from './chat-ux.js';
 import { randomGuestName, sanitizeGuestNameInput } from './guest-names.js';
 import {
-  avatarLetter,
   apiProfile,
   bindProfileTabs,
   fillProfileForm,
+  formatMemberSince,
 } from './profile.js';
+import { paintAvatar, readGuestAvatar, writeGuestAvatar } from './avatars.js';
+import { bindAvatarStudio } from './avatar-studio.js';
 import {
   initUploadUi,
   showUploadProgress,
@@ -58,6 +60,13 @@ import {
   const SIDEBAR_KEY = 'cadence_sidebar';
   const PANEL_KEY = 'cadence_panel';
   const motionOk = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let avatarStudio = null;
+
+  const ROOM_TYPES = [
+    { value: 'public', label: 'Open', hint: 'Anyone in the room list can enter' },
+    { value: 'private', label: 'Private', hint: 'Hidden until you invite someone' },
+    { value: 'locked', label: 'Locked', hint: 'Visible, but only invited people enter' },
+  ];
 
   const state = {
     socket: null,
@@ -67,6 +76,9 @@ import {
     activeRoomType: 'public',
     unread: Object.create(null),
     lastRoomList: [],
+    roomQuery: '',
+    avatars: Object.create(null),
+    messageAvatars: Object.create(null),
     messageIds: new Set(),
     customEmojis: { emojis: [], gifs: [] },
     pickerOpen: false,
@@ -100,6 +112,8 @@ import {
     createRoomForm: $('create-room-form'),
     roomNameInput: $('room-name'),
     roomTypeSelect: $('room-type'),
+    roomSearch: $('room-search'),
+    roomCodeLabel: $('room-code-label'),
     inviteForm: $('invite-form'),
     inviteUsername: $('invite-username'),
     inviteNote: $('invite-note'),
@@ -374,21 +388,32 @@ import {
     else showModerationModal(detail);
   });
 
+  function resetSheetMotion(dialog) {
+    const sheet = dialog?.querySelector('.gate-sheet, .lightbox-sheet, .recorder-sheet');
+    if (!sheet) return;
+    sheet.getAnimations?.().forEach((anim) => anim.cancel());
+    sheet.style.opacity = '';
+    sheet.style.transform = '';
+  }
+
   function showModal(dialog) {
-    if (typeof dialog.showModal !== 'function') return;
+    if (!dialog || typeof dialog.showModal !== 'function' || dialog.open) return;
+    resetSheetMotion(dialog);
     dialog.showModal();
     const sheet = dialog.querySelector('.gate-sheet');
-    motion(sheet, { opacity: [0, 1], scale: [0.94, 1], y: [20, 0] }, { duration: 0.45, easing: spring() });
+    if (motionOk && sheet) {
+      motion(sheet, { opacity: [0, 1], scale: [0.96, 1], y: [12, 0] }, { duration: 0.28, easing: spring() });
+    }
   }
 
   function hideModal(dialog) {
-    if (!dialog?.open) return;
-    const sheet = dialog.querySelector('.gate-sheet');
-    if (motionOk && sheet) {
-      animate(sheet, { opacity: [1, 0], scale: [1, 0.96], y: [0, 10] }, { duration: 0.25 }).finished.then(() => dialog.close());
-    } else {
-      dialog.close();
+    if (!dialog) return;
+    resetSheetMotion(dialog);
+    if (dialog === elements.profileDialog) {
+      document.getElementById('avatar-view')?.close();
+      setProfileMode('self');
     }
+    if (dialog.open) dialog.close();
   }
 
   function readSidebarState() {
@@ -429,10 +454,20 @@ import {
     saveSidebarState(saved);
   }
 
-  function updateUserChip(name) {
+  function currentSelfAvatar() {
+    if (state.user && state.profile) return state.profile.avatar || null;
+    return readGuestAvatar();
+  }
+
+  function updateUserChip(name, avatar) {
     const label = name || 'Guest';
     elements.meName.textContent = label;
-    elements.profileAvatar.textContent = avatarLetter(label);
+    paintAvatar(elements.profileAvatar, avatar === undefined ? currentSelfAvatar() : avatar, label);
+  }
+
+  function syncRoomCodeLabel() {
+    const room = state.lastRoomList.find((item) => item.name === state.activeRoom);
+    if (elements.roomCodeLabel) elements.roomCodeLabel.textContent = room?.code ? `#${room.code}` : '';
   }
 
   function updateInviteButton() {
@@ -504,6 +539,7 @@ import {
     $('guest-pref-sound').checked = state.preferences.soundEnabled !== false;
     $('guest-pref-send-sound').checked = state.preferences.sendSoundEnabled !== false;
     $('guest-pref-title').checked = state.preferences.titleNotifications !== false;
+    avatarStudio?.render();
     showModal(elements.guestSettingsDialog);
   }
 
@@ -522,7 +558,43 @@ import {
     showToast('Guest settings saved', 'success');
   }
 
+  function setProfileMode(mode) {
+    state.profileMode = mode;
+    elements.profileDialog?.classList.toggle('is-peer', mode === 'peer');
+    const self = $('profile-self');
+    const peer = $('profile-peer');
+    if (self) self.hidden = mode === 'peer';
+    if (peer) peer.hidden = mode !== 'peer';
+  }
+
+  function openPersonProfile(user, label) {
+    const mine = user.id === state.socket?.id;
+    if (mine && state.sessionToken) {
+      openProfileDialog();
+      return;
+    }
+    if (mine) {
+      openGuestSettings();
+      return;
+    }
+    setProfileMode('peer');
+    state.peerAvatar = user.avatar || null;
+    state.peerName = label;
+    paintAvatar($('profile-hero-avatar'), user.avatar, label);
+    $('profile-title').textContent = label;
+    $('profile-username').textContent = user.username ? `@${user.username}` : 'In this room';
+    $('profile-member-since').textContent = user.createdAt ? formatMemberSince(user.createdAt) : '';
+    const role = $('peer-role');
+    role.textContent = user.role?.name || '';
+    role.style.color = user.role?.color || '';
+    $('peer-bio').textContent = user.bio?.trim() || 'No bio yet.';
+    showModal(elements.profileDialog);
+  }
+
   async function openProfileDialog() {
+    setProfileMode('self');
+    state.peerAvatar = null;
+    state.peerName = '';
     if (!state.sessionToken) {
       openGuestSettings();
       return;
@@ -532,7 +604,33 @@ import {
       state.profile = profile;
       state.preferences = { ...state.preferences, ...profile.preferences };
       fillProfileForm(profile, profileEls);
+      avatarStudio?.render();
       showModal(elements.profileDialog);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  async function saveAvatar(avatar) {
+    const clean = avatar && avatar.kind !== 'letter' ? avatar : null;
+    try {
+      if (state.sessionToken) {
+        const { profile } = await apiProfile(state.sessionToken, '/api/profile', {
+          method: 'PATCH',
+          body: JSON.stringify({ avatar: clean || { kind: 'letter' } }),
+        });
+        state.profile = profile;
+        fillProfileForm(profile, profileEls);
+        updateUserChip(profile.displayName || profile.username, profile.avatar);
+        state.socket?.emit('presenceRefresh');
+      } else {
+        writeGuestAvatar(clean);
+        updateUserChip(elements.meName.textContent, clean);
+        state.socket?.emit('presenceAvatar', clean?.kind === 'preset' ? clean : { kind: 'letter' });
+      }
+      refreshMessageAvatars();
+      avatarStudio?.render();
+      showToast('Avatar updated', 'success');
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -836,13 +934,22 @@ import {
 
   function renderRoomList(rooms) {
     const fragment = document.createDocumentFragment();
+    const query = String(state.roomQuery || '').trim().toLowerCase().replace(/^#/, '');
+    const visible = query
+      ? rooms.filter((room) => room.name.toLowerCase().includes(query) || String(room.code || '').toLowerCase().includes(query))
+      : rooms;
     if (!rooms.length) {
       fragment.appendChild(Object.assign(document.createElement('p'), {
         className: 'empty-state',
         textContent: 'Silence. Create the first room.',
       }));
+    } else if (!visible.length) {
+      fragment.appendChild(Object.assign(document.createElement('p'), {
+        className: 'empty-state',
+        textContent: 'No rooms match that name or ID.',
+      }));
     }
-    rooms.forEach((room) => {
+    visible.forEach((room) => {
       const item = document.createElement('button');
       item.type = 'button';
       item.className = 'room-item';
@@ -855,7 +962,7 @@ import {
       item.innerHTML = `
         <div class="room-top">
           <span class="room-name">${escapeText(room.name)}${unread > 0 ? `<span class="room-badge">${unread}</span>` : ''}</span>
-          <span class="room-type">${escapeText(room.type)}</span>
+          <span class="room-type">${room.code ? `<span class="room-code">#${escapeText(room.code)}</span> ` : ''}${escapeText(room.type)}</span>
         </div>
         <div class="room-meta">${room.memberCount} present · ${room.pinnedCount} pinned</div>
         <div class="room-meta">${joinLabel}</div>`;
@@ -863,21 +970,31 @@ import {
     });
     elements.roomList.replaceChildren(fragment);
     staggerIn(elements.roomList, '.room-item');
+    syncRoomCodeLabel();
   }
 
   function renderUserList(users) {
     const fragment = document.createDocumentFragment();
     const localGuestName = !state.user?.id ? readGuestName() : '';
+    state.avatars = Object.create(null);
     users.forEach((user) => {
-      const item = document.createElement('div');
+      if (user.userId && user.avatar) state.avatars[user.userId] = user.avatar;
+      const item = document.createElement('button');
+      item.type = 'button';
       item.className = 'user-item';
-      const nameSpan = document.createElement('span');
+      const avatar = document.createElement('span');
+      avatar.className = 'msg-avatar';
       let label = user.name || 'Guest';
       if (user.id === state.socket?.id && localGuestName && (label === 'Anonymous' || label === 'Guest')) {
         label = localGuestName;
       }
+      paintAvatar(avatar, user.avatar, label);
+      item.appendChild(avatar);
+      const nameSpan = document.createElement('span');
       nameSpan.textContent = label;
       item.appendChild(nameSpan);
+      item.setAttribute('aria-label', `View profile of ${label}`);
+      item.addEventListener('click', () => openPersonProfile(user, label));
       if (user.role) {
         const roleSpan = document.createElement('span');
         roleSpan.className = 'user-role';
@@ -894,6 +1011,7 @@ import {
     });
     elements.userList.replaceChildren(fragment);
     staggerIn(elements.userList, '.user-item');
+    refreshMessageAvatars();
   }
 
   function renderPinnedList(pinned) {
@@ -941,11 +1059,14 @@ import {
     const message = document.createElement('article');
     message.className = 'message them decoy-preview';
     message.setAttribute('aria-hidden', 'true');
-
+    const avatar = document.createElement('span');
+    avatar.className = 'msg-avatar';
+    paintAvatar(avatar, null, payload.senderName || 'Someone');
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble';
     const body = document.createElement('div');
     body.className = 'message-body';
     body.textContent = payload.text || '';
-
     const meta = document.createElement('div');
     meta.className = 'message-meta';
     const sender = document.createElement('span');
@@ -954,7 +1075,8 @@ import {
     time.textContent = state.preferences.showTimestamps ? formatTime(payload.ts) : '';
     time.hidden = !state.preferences.showTimestamps;
     meta.append(sender, time);
-    message.append(body, meta);
+    bubble.append(body, meta);
+    message.append(avatar, bubble);
     elements.messages.appendChild(message);
   }
 
@@ -1002,7 +1124,14 @@ import {
     const own = type === 'me' || isOwnMessage(payload);
     const message = document.createElement('article');
     message.className = `message${own ? ' me' : ' them'}${shouldAnimate ? ' message-enter' : ''}`;
+    message.dataset.id = payload.id || '';
+    message.dataset.userId = payload.senderUserId || '';
+    if (payload.senderAvatar) state.messageAvatars[payload.id] = payload.senderAvatar;
 
+    const avatar = document.createElement('span');
+    avatar.className = 'msg-avatar';
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble';
     const body = document.createElement('div');
     body.className = 'message-body';
     if (payload.text) body.textContent = payload.text;
@@ -1011,7 +1140,14 @@ import {
     const meta = document.createElement('div');
     meta.className = 'message-meta';
     const sender = document.createElement('span');
+    sender.className = 'message-sender';
     sender.textContent = own ? 'You' : (payload.senderName || 'Guest');
+    message.dataset.senderName = sender.textContent;
+    paintAvatar(
+      avatar,
+      own ? currentSelfAvatar() : (payload.senderAvatar || (payload.senderUserId && state.avatars[payload.senderUserId]) || null),
+      sender.textContent,
+    );
     const time = document.createElement('span');
     time.textContent = state.preferences.showTimestamps ? formatTime(payload.ts) : '';
     time.hidden = !state.preferences.showTimestamps;
@@ -1026,12 +1162,27 @@ import {
       }
     });
     meta.append(sender, time, pinButton);
-    message.append(body, meta);
+    bubble.append(body, meta);
+    message.append(avatar, bubble);
     elements.messages.appendChild(message);
     elements.messages.scrollTop = elements.messages.scrollHeight;
     if (shouldAnimate && motionOk) {
       motion(message, { opacity: [0, 1], y: [own ? 10 : 18, 0], x: [own ? 12 : -8, 0] }, { duration: 0.42, easing: spring() });
     }
+  }
+
+  function refreshMessageAvatars() {
+    elements.messages.querySelectorAll('.message').forEach((node) => {
+      const slot = node.querySelector('.msg-avatar');
+      if (!slot) return;
+      if (node.classList.contains('me')) {
+        paintAvatar(slot, currentSelfAvatar(), 'You');
+        return;
+      }
+      const userId = node.dataset.userId;
+      const known = state.messageAvatars[node.dataset.id];
+      paintAvatar(slot, (userId && state.avatars[userId]) || known || null, node.dataset.senderName || '');
+    });
   }
 
   function handleIncomingMessage(msg) {
@@ -1161,6 +1312,8 @@ import {
         } else {
           state.isGuest = true;
           syncGuestDisplayName();
+          const guestAvatar = readGuestAvatar();
+          if (guestAvatar?.kind === 'preset') socket.emit('presenceAvatar', guestAvatar);
           updateAuthChrome();
         }
       } else {
@@ -1292,6 +1445,11 @@ import {
       goToChatPanel();
     });
 
+    elements.roomSearch?.addEventListener('input', () => {
+      state.roomQuery = elements.roomSearch.value;
+      renderRoomList(state.lastRoomList);
+    });
+
     elements.createRoomForm.addEventListener('submit', (event) => {
       event.preventDefault();
       const name = elements.roomNameInput.value.trim();
@@ -1320,10 +1478,20 @@ import {
     });
 
     elements.profileBtn.addEventListener('click', openProfileDialog);
-    elements.profileClose.addEventListener('click', () => hideModal(elements.profileDialog));
-    elements.profileDialog.addEventListener('cancel', (e) => {
-      e.preventDefault();
+    elements.profileClose.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       hideModal(elements.profileDialog);
+    });
+    elements.profileDialog.addEventListener('cancel', (event) => {
+      event.preventDefault();
+      hideModal(elements.profileDialog);
+    });
+    elements.profileDialog.addEventListener('close', () => setProfileMode('self'));
+    document.querySelectorAll('dialog.gate').forEach((dialog) => {
+      dialog.addEventListener('click', (event) => {
+        if (event.target === dialog) hideModal(dialog);
+      });
     });
     elements.moderationOk?.addEventListener('click', () => {
       hideModal(elements.moderationDialog);
@@ -1475,6 +1643,120 @@ import {
     refreshCustomEmojis();
   }
 
+  function initRoomTypeCombo() {
+    const trigger = $('room-type-trigger');
+    const panel = $('room-type-panel');
+    const search = $('room-type-search');
+    const list = $('room-type-list');
+    const hidden = elements.roomTypeSelect;
+    if (!trigger || !panel || !list || !hidden) return;
+
+    let activeIndex = 0;
+    const filtered = () => {
+      const q = (search.value || '').trim().toLowerCase();
+      if (!q) return ROOM_TYPES;
+      return ROOM_TYPES.filter((item) => item.label.toLowerCase().includes(q)
+        || item.value.includes(q)
+        || item.hint.toLowerCase().includes(q));
+    };
+
+    const paint = () => {
+      const items = filtered();
+      list.replaceChildren();
+      if (!items.length) {
+        const empty = document.createElement('p');
+        empty.className = 'combo-empty';
+        empty.textContent = 'No types match.';
+        list.appendChild(empty);
+        return;
+      }
+      items.forEach((item, index) => {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'combo-option';
+        option.setAttribute('role', 'option');
+        option.id = `room-type-opt-${item.value}`;
+        option.setAttribute('aria-selected', String(item.value === hidden.value));
+        if (index === activeIndex) option.classList.add('is-active');
+        if (item.value === hidden.value) option.classList.add('is-selected');
+        const label = document.createElement('span');
+        label.textContent = item.label;
+        const hint = document.createElement('small');
+        hint.textContent = item.hint;
+        option.append(label, hint);
+        option.addEventListener('click', () => choose(item));
+        list.appendChild(option);
+      });
+      list.querySelector('.is-active')?.scrollIntoView({ block: 'nearest' });
+    };
+
+    const choose = (item) => {
+      hidden.value = item.value;
+      trigger.textContent = item.label;
+      close();
+    };
+
+    const place = () => {
+      if (panel.parentElement !== document.body) document.body.appendChild(panel);
+      const rect = trigger.getBoundingClientRect();
+      panel.style.position = 'fixed';
+      panel.style.left = `${Math.max(8, rect.left)}px`;
+      panel.style.top = `${rect.bottom + 6}px`;
+      panel.style.width = `${Math.max(rect.width, 240)}px`;
+      panel.style.zIndex = '80';
+    };
+
+    const open = () => {
+      panel.hidden = false;
+      trigger.setAttribute('aria-expanded', 'true');
+      search.value = '';
+      activeIndex = Math.max(0, ROOM_TYPES.findIndex((item) => item.value === hidden.value));
+      place();
+      paint();
+      search.focus();
+    };
+
+    const close = () => {
+      panel.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+    };
+
+    trigger.addEventListener('click', () => {
+      if (panel.hidden) open();
+      else close();
+    });
+    search.addEventListener('input', () => {
+      activeIndex = 0;
+      paint();
+    });
+    search.addEventListener('keydown', (event) => {
+      const items = filtered();
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        activeIndex = Math.min(Math.max(items.length - 1, 0), activeIndex + 1);
+        paint();
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        activeIndex = Math.max(0, activeIndex - 1);
+        paint();
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        if (items[activeIndex]) choose(items[activeIndex]);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+        trigger.focus();
+      }
+    });
+    document.addEventListener('pointerdown', (event) => {
+      if (!panel.hidden && !event.target.closest('#room-type-combo') && !panel.contains(event.target)) close();
+    });
+    window.addEventListener('resize', () => {
+      if (!panel.hidden) place();
+    });
+    trigger.textContent = (ROOM_TYPES.find((item) => item.value === hidden.value) || ROOM_TYPES[0]).label;
+  }
+
   document.addEventListener('DOMContentLoaded', async () => {
     applyPreferences(loadLocalPreferences());
     primeAudioOnGesture();
@@ -1495,6 +1777,13 @@ import {
     initAmbient();
     introReveal();
     initSidebar();
+    initRoomTypeCombo();
+    avatarStudio = bindAvatarStudio({
+      roots: [document.getElementById('profile-avatar-studio'), document.getElementById('guest-avatar-studio')].filter(Boolean),
+      onCommit: (avatar) => { saveAvatar(avatar); },
+      getAvatar: () => (state.profileMode === 'peer' ? state.peerAvatar : currentSelfAvatar()),
+      getName: () => (state.profileMode === 'peer' ? state.peerName : elements.meName.textContent),
+    });
     initUploadUi();
     mobilePanels = initMobilePanels();
 

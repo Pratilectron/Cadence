@@ -1,3 +1,5 @@
+import { paintAvatar } from './avatars.js';
+
 export function avatarLetter(name) {
   const s = String(name || '?').trim();
   return (s[0] || '?').toUpperCase();
@@ -64,8 +66,9 @@ export function bindProfileTabs(dialog) {
 }
 
 export function fillProfileForm(profile, els) {
-  els.heroAvatar.textContent = avatarLetter(profile.displayName || profile.username);
-  els.chipAvatar.textContent = avatarLetter(profile.displayName || profile.username);
+  const label = profile.displayName || profile.username;
+  paintAvatar(els.heroAvatar, profile.avatar, label);
+  paintAvatar(els.chipAvatar, profile.avatar, label);
   els.title.textContent = profile.displayName || profile.username;
   els.username.textContent = profile.username;
   els.memberSince.textContent = formatMemberSince(profile.createdAt);

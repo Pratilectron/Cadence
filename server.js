@@ -29,10 +29,11 @@ const {
   removeRole,
   serializeRolesForClient,
   isRoomOwner,
+  loadRoomStore,
 } = require('./lib/roles');
 const { getConfig, reloadConfig, isSuperAdminUsername } = require('./lib/config');
 const { initUsersStore, loadUsersDb, saveUsersDb, usersDb } = require('./lib/users-store');
-const { DB_FILE, initDb, insertRoomMessage, listRoomMessages, upsertChatClient, listChatClients } = require('./lib/db');
+const { DB_FILE, initDb, insertRoomMessage, listRoomMessages, upsertChatClient, listChatClients, getUserById } = require('./lib/db');
 const dbReady = initDb();
 const {
   createSession,
@@ -43,7 +44,7 @@ const {
 } = require('./lib/sessions-store');
 const adminLib = require('./lib/admin');
 const { handleAdminApi } = require('./lib/admin-api');
-const { buildProfile, updateProfile } = require('./lib/profile');
+const { buildProfile, updateProfile, publicAvatar, isPresetId } = require('./lib/profile');
 const { parseRequestUrl } = require('./lib/request-url');
 const { setupProcessHandlers, startHttpServer } = require('./lib/bootstrap');
 const { handleDeployWebhook } = require('./lib/deploy');
@@ -128,9 +129,33 @@ const rateLimits = new Map();
 
 const rooms = {};
 
+const ROOM_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+
+function allocateRoomCode() {
+  const used = new Set();
+  for (const room of Object.values(rooms)) {
+    if (room.code) used.add(room.code);
+  }
+  try {
+    for (const meta of Object.values(loadRoomStore())) {
+      if (meta.code) used.add(meta.code);
+    }
+  } catch {
+    // store may be unread before the database is ready
+  }
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    const bytes = crypto.randomBytes(5);
+    let code = '';
+    for (let i = 0; i < 5; i += 1) code += ROOM_CODE_ALPHABET[bytes[i] % ROOM_CODE_ALPHABET.length];
+    if (!used.has(code)) return code;
+  }
+  return crypto.randomBytes(4).toString('hex').toUpperCase();
+}
+
 function createRoom(name, type, ownerId = null) {
   const room = {
     name,
+    code: '',
     users: new Map(),
     messages: [],
     pinned: [],
@@ -141,7 +166,22 @@ function createRoom(name, type, ownerId = null) {
     memberRoles: {},
   };
   initRoomRoles(room, type);
+  if (!room.code) room.code = allocateRoomCode();
   return room;
+}
+
+function avatarForSocket(socket) {
+  if (socket.user?.id) return publicAvatar(getUserById(socket.user.id));
+  return publicAvatar(socket.data?.avatar ? { avatar: socket.data.avatar } : null);
+}
+
+function rememberPresence(room, socket) {
+  if (!room || !socket) return;
+  room.users.set(socket.id, {
+    name: socket.data.name || 'Guest',
+    userId: socket.user?.id || null,
+    avatar: socket.data.avatar || null,
+  });
 }
 
 function hashPasswordScrypt(password) {
@@ -813,6 +853,7 @@ function buildRoomListFor(socket) {
 
     list.push({
       name,
+      code: room.code || '',
       type: room.type,
       ownerId: room.ownerId,
       memberCount: room.users.size,
@@ -862,10 +903,7 @@ function resetPlatformState(actorUserId, keepToken) {
 
     socket.join(defaultRoom);
     socket.data.room = defaultRoom;
-    rooms[defaultRoom].users.set(socket.id, {
-      name: socket.data.name || 'Anonymous',
-      userId: socket.user?.id || null,
-    });
+    rememberPresence(rooms[defaultRoom], socket);
 
     socket.emit('history', []);
     socket.emit('pinned', []);
@@ -883,12 +921,19 @@ function broadcastUserlist(roomName) {
   const room = rooms[roomName];
   if (!room) return;
 
-  const users = Array.from(room.users.entries()).map(([id, info]) => ({
-    id,
-    name: info.name,
-    userId: info.userId || null,
-    role: info.userId ? getDisplayRole(room, info.userId) : null,
-  }));
+  const users = Array.from(room.users.entries()).map(([id, info]) => {
+    const record = info.userId ? getUserById(info.userId) : null;
+    return {
+      id,
+      name: info.name,
+      userId: info.userId || null,
+      username: record?.username || '',
+      bio: record?.bio || '',
+      createdAt: record?.createdAt || null,
+      avatar: record ? publicAvatar(record) : publicAvatar(info.avatar ? { avatar: info.avatar } : null),
+      role: info.userId ? getDisplayRole(room, info.userId) : null,
+    };
+  });
 
   io.to(roomName).emit('userlist', users);
 }
@@ -999,10 +1044,7 @@ function joinRoom(socket, roomName) {
   if (!socket.data.roomJoinedAt) socket.data.roomJoinedAt = {};
   socket.data.roomJoinedAt[roomName] = Date.now();
 
-  room.users.set(socket.id, {
-    name: socket.data.name || 'Anonymous',
-    userId: socket.user?.id || null,
-  });
+  rememberPresence(room, socket);
 
   activityLog('room.joined', socket, { room: roomName, roomType: room.type });
   broadcastUserlist(roomName);
@@ -1087,6 +1129,7 @@ function buildMessagePayload(socket, msg) {
     senderId: socket.id,
     senderUserId: socket.user?.id || null,
     senderName: socket.data.name || 'Anonymous',
+    senderAvatar: avatarForSocket(socket),
     ts: Date.now(),
     room: current,
   };
@@ -1146,7 +1189,7 @@ function setSocketPresenceName(socket, name, userId = null) {
   socket.data.name = clean;
   const room = rooms[socket.data.room];
   if (room) {
-    room.users.set(socket.id, { name: clean, userId });
+    rememberPresence(room, socket);
     broadcastUserlist(socket.data.room);
   }
 }
@@ -1166,10 +1209,7 @@ function activateChatSocket(socket) {
   socket.data.roomJoinedAt[defaultRoom] = Date.now();
 
   socket.join(defaultRoom);
-  rooms[defaultRoom].users.set(socket.id, {
-    name: socket.data.name,
-    userId: socket.user?.id || null,
-  });
+  rememberPresence(rooms[defaultRoom], socket);
   activityLog('user.connected', socket, { room: defaultRoom });
   broadcastUserlist(defaultRoom);
   sendHistory(defaultRoom, socket);
@@ -1190,7 +1230,7 @@ function ensureChatGate(socket) {
 function updateSocketPresence(socket) {
   const room = rooms[socket.data.room];
   if (!room || !socket.data.chatActive) return;
-  room.users.set(socket.id, { name: socket.data.name, userId: socket.user?.id || null });
+  rememberPresence(room, socket);
   broadcastUserlist(socket.data.room);
 }
 
@@ -1387,6 +1427,22 @@ io.on('connection', (socket) => {
   socket.on('requestRoomList', () => {
     if (!ensureChatGate(socket)) return;
     sendRoomList(socket);
+  });
+
+  socket.on('presenceAvatar', (body) => {
+    if (!ensureChatGate(socket)) return;
+    if (socket.user?.id) {
+      updateSocketPresence(socket);
+      return;
+    }
+    const id = body && body.id;
+    socket.data.avatar = isPresetId(id) ? { kind: 'preset', id } : null;
+    updateSocketPresence(socket);
+  });
+
+  socket.on('presenceRefresh', () => {
+    if (!ensureChatGate(socket)) return;
+    updateSocketPresence(socket);
   });
 
   socket.on('requestHistory', ({ room } = {}) => {
@@ -1694,7 +1750,7 @@ async function bootstrap() {
   await initUsersStore();
   for (const roomName of cfg().defaultRooms) {
     rooms[roomName] = createRoom(roomName, 'public');
-    rooms[roomName].name = roomName;
+    persistRoomMeta(roomName, rooms[roomName]);
     const stored = listRoomMessages(roomName, { since: 0, limit: cfg().maxMessagesPerRoom });
     if (stored.length) rooms[roomName].messages = stored;
   }

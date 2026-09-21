@@ -38,24 +38,30 @@
         <div class="folio-head">
           <span class="folio-label">Rooms</span>
         </div>
+        <div class="folio-fields">
         <form class="micro-form" id="create-room-form">
           <input id="room-name" placeholder="New room…" maxlength="64" autocomplete="off" aria-label="Room name" />
           <div class="micro-row">
-            <select id="room-type" aria-label="Room type">
-              <option value="public">Open</option>
-              <option value="private">Private</option>
-              <option value="locked">Locked</option>
-            </select>
+            <div class="combo" id="room-type-combo">
+              <button type="button" class="combo-trigger" id="room-type-trigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="room-type-list">Open</button>
+              <div class="combo-panel" id="room-type-panel" hidden>
+                <input type="search" class="combo-search" id="room-type-search" placeholder="Search type…" autocomplete="off" aria-label="Search room types" />
+                <div class="combo-list scrollbar" id="room-type-list" role="listbox" aria-label="Room type"></div>
+              </div>
+            </div>
+            <input type="hidden" id="room-type" value="public" />
             <button type="submit" class="pill-btn">+</button>
           </div>
         </form>
+        <input id="room-search" class="room-search" type="search" placeholder="Search name or ID" aria-label="Search rooms by name or ID" autocomplete="off" />
+        </div>
         <div class="folio-scroll scrollbar" id="room-list" role="list"></div>
       </aside>
 
       <section class="folio folio-chat is-panel-active" data-panel="chat">
         <header class="chat-stage-head">
           <div>
-            <p class="stage-kicker" id="room-type-label">Public</p>
+            <p class="stage-kicker"><span id="room-type-label">Public</span><span id="room-code-label" class="room-code-label"></span></p>
             <h1 class="stage-title" id="active-room">General</h1>
           </div>
           <div class="stage-actions">
@@ -175,19 +181,33 @@
     <div class="gate-sheet gate-sheet--profile">
       <button type="button" class="link-btn gate-close" id="profile-close" aria-label="Close">✕</button>
       <div class="profile-hero">
-        <div class="profile-hero-avatar" id="profile-hero-avatar">?</div>
+        <button type="button" class="profile-hero-avatar" id="profile-hero-avatar" data-avatar-view title="View avatar">?</button>
         <div>
           <h2 id="profile-title">Profile</h2>
           <p class="profile-hero-user" id="profile-username">—</p>
           <p class="profile-hero-meta" id="profile-member-since"></p>
         </div>
       </div>
+      <div id="profile-self">
       <div class="profile-tabs">
         <button type="button" class="profile-tab active" data-tab="overview">Overview</button>
         <button type="button" class="profile-tab" data-tab="settings">Settings</button>
         <button type="button" class="profile-tab" data-tab="security">Security</button>
       </div>
       <div class="profile-panel active" id="profile-tab-overview">
+        <div class="avatar-studio" id="profile-avatar-studio">
+          <div class="avatar-actions">
+            <button type="button" class="pill-btn" data-avatar-upload>Upload photo</button>
+            <button type="button" class="pill-btn" data-avatar-view>View</button>
+            <button type="button" class="pill-btn" data-avatar-clear>Use initial</button>
+          </div>
+          <input type="file" data-avatar-file hidden accept="image/*" />
+          <label class="profile-field">
+            <span>Avatar</span>
+            <input type="search" data-avatar-search placeholder="Search 36 avatars or an ID like mark-04" autocomplete="off" />
+          </label>
+          <div class="avatar-grid scrollbar" data-avatar-grid></div>
+        </div>
         <div class="profile-stat-grid" id="profile-stats"></div>
         <label class="profile-field">
           <span>Display name</span>
@@ -243,6 +263,11 @@
           <button type="submit" class="pill-btn pill-accent pill-wide">Change password</button>
           <p class="form-error" id="profile-password-error" role="alert"></p>
         </form>
+      </div>
+      </div>
+      <div id="profile-peer" hidden>
+        <p class="profile-peer-role" id="peer-role"></p>
+        <p class="profile-peer-bio" id="peer-bio"></p>
       </div>
     </div>
   </dialog>
@@ -300,6 +325,13 @@
       <button type="button" class="link-btn gate-close" id="guest-settings-close">✕</button>
       <h2 id="guest-settings-title">Guest settings</h2>
       <p class="gate-copy">Tune alerts and choose how you appear in public rooms.</p>
+      <div class="avatar-studio" id="guest-avatar-studio">
+        <label class="profile-field">
+          <span>Avatar</span>
+          <input type="search" data-avatar-search placeholder="Search avatars" autocomplete="off" />
+        </label>
+        <div class="avatar-grid scrollbar" data-avatar-grid></div>
+      </div>
       <label class="profile-field">
         <span>Display name</span>
         <div class="guest-name-row">
@@ -345,6 +377,32 @@
       <p class="moderation-strikes" id="moderation-strikes" hidden></p>
       <p class="moderation-lockout" id="moderation-lockout" hidden></p>
       <button type="button" class="pill-btn pill-accent pill-wide" id="moderation-ok">Understood</button>
+    </div>
+  </dialog>
+
+  <dialog class="gate" id="avatar-editor" aria-labelledby="avatar-editor-title">
+    <div class="gate-sheet avatar-editor-sheet">
+      <p class="gate-kicker">Photo</p>
+      <h2 id="avatar-editor-title">Crop and adjust</h2>
+      <p class="gate-copy">Drag the photo to reposition it. Zoom and the sliders stay on the square that other people see.</p>
+      <canvas id="avatar-crop" class="avatar-crop" width="256" height="256"></canvas>
+      <label class="avatar-slider"><span>Zoom</span><input id="avatar-zoom" type="range" min="1" max="2.6" step="0.01" value="1" /></label>
+      <label class="avatar-slider"><span>Brightness</span><input id="avatar-bright" type="range" min="0.6" max="1.6" step="0.01" value="1" /></label>
+      <label class="avatar-slider"><span>Contrast</span><input id="avatar-contrast" type="range" min="0.6" max="1.6" step="0.01" value="1" /></label>
+      <label class="avatar-slider"><span>Color</span><input id="avatar-sat" type="range" min="0" max="1.8" step="0.01" value="1" /></label>
+      <div class="avatar-editor-actions">
+        <button type="button" class="pill-btn" data-avatar-reset>Reset</button>
+        <button type="button" class="pill-btn" data-avatar-cancel>Cancel</button>
+        <button type="button" class="pill-btn pill-accent" data-avatar-save>Use photo</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="gate" id="avatar-view" aria-labelledby="avatar-view-title">
+    <div class="gate-sheet avatar-view-sheet">
+      <h2 id="avatar-view-title">Avatar</h2>
+      <div class="avatar-view-stage" id="avatar-view-stage"></div>
+      <button type="button" class="pill-btn pill-accent pill-wide" id="avatar-view-close">Close</button>
     </div>
   </dialog>
 
