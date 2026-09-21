@@ -279,11 +279,14 @@ import {
 
   function dismissToast(toast) {
     if (!toast?.isConnected) return;
-    if (motionOk) {
-      animate(toast, { opacity: [1, 0], x: [0, 10] }, { duration: 0.25 }).finished.then(() => toast.remove());
-    } else {
+    if (!motionOk) {
       toast.remove();
+      return;
     }
+    const animation = animate(toast, { opacity: [1, 0], x: [0, 10] }, { duration: 0.25 });
+    const done = animation?.finished || animation;
+    if (done && typeof done.then === 'function') done.then(() => toast.remove());
+    else toast.remove();
   }
 
   function showToast(text, type = 'info', ttl = 8000) {

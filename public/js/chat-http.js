@@ -16,7 +16,7 @@ export function createHttpChat() {
   let closed = false;
   let polling = false;
   const seenMessageIds = new Set();
-  const metaSnap = { roomlist: '', userlist: '', pinned: '' };
+  const metaSnap = { roomlist: '', userlist: '', pinned: '', roomRoles: '' };
 
   const api = {
     connected: false,
@@ -63,7 +63,8 @@ export function createHttpChat() {
       }
       currentRoom = data.room;
       rememberHistory(data.history?.messages);
-      fire('roomJoined', { roomName: data.room, type: 'public' });
+      fire('roomJoined', { roomName: data.room, type: data.roomType || 'public' });
+      if (data.roomRoles) fire('roomRoles', data.roomRoles);
       fire('history', data.history);
       fire('pinned', data.pinned || []);
       fire('userlist', data.userlist || []);
@@ -123,6 +124,8 @@ export function createHttpChat() {
         else if (restored.status === 401) fire('sessionExpired');
       }
       fire('connect');
+      fire('roomJoined', { roomName: data.room, type: data.roomType || 'public' });
+      if (data.roomRoles) fire('roomRoles', data.roomRoles);
       fire('history', data.history);
       fire('pinned', data.pinned || []);
       fire('roomlist', data.roomlist || []);
@@ -200,6 +203,7 @@ export function createHttpChat() {
       fireIfChanged('roomlist', 'roomlist', data.roomlist);
       fireIfChanged('userlist', 'userlist', data.userlist);
       fireIfChanged('pinned', 'pinned', data.pinned);
+      fireIfChanged('roomRoles', 'roomRoles', data.roomRoles);
     } catch (err) {
       api.connected = false;
       fire('connect_error', err);

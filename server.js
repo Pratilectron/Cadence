@@ -225,6 +225,8 @@ function chatHttpContext() {
     requirePerm,
     canJoinRoom,
     userHasPermission,
+    serializeRolesForClient,
+    isSuperAdmin,
     logHttpActivity,
   };
 }
