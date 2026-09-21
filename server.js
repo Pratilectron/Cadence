@@ -34,6 +34,7 @@ const {
 const { getConfig, reloadConfig, isSuperAdminUsername } = require('./lib/config');
 const { initUsersStore, loadUsersDb, saveUsersDb, usersDb } = require('./lib/users-store');
 const { DB_FILE, initDb, insertRoomMessage, listRoomMessages, upsertChatClient, listChatClients, getUserById } = require('./lib/db');
+const { projectMessage, visibleMessages } = require('./lib/message-visibility');
 const dbReady = initDb();
 const {
   createSession,
@@ -75,6 +76,7 @@ const {
   handleChatHello,
   handleChatPoll,
   handleChatMessage,
+  handleChatMessageAction,
   handleChatJoin,
 } = require('./lib/chat-http');
 
@@ -259,6 +261,7 @@ function chatHttpContext() {
     rooms,
     listRoomMessages,
     insertRoomMessage,
+    applyMessageAction,
     upsertChatClient,
     listChatClients,
     buildMessagePayload,
@@ -599,6 +602,10 @@ async function handleHttp(req, res) {
 
   if (urlPath === '/api/chat/message') {
     if (await handleChatMessage(req, res, jsonResponse, chatHttpContext())) return;
+  }
+
+  if (urlPath === '/api/chat/message/action') {
+    if (await handleChatMessageAction(req, res, jsonResponse, chatHttpContext())) return;
   }
 
   if (urlPath === '/api/chat/join') {
@@ -948,24 +955,133 @@ function isGuestSocket(socket) {
   return !socket.user?.id;
 }
 
+function viewerCanManageMessages(room, user) {
+  if (!user?.id || !room) return false;
+  return userHasPermission(room, user.id, 'MANAGE_MESSAGES');
+}
+
+function isMessageAuthor(message, user, actorId) {
+  if (user?.id && message.senderUserId && message.senderUserId === user.id) return true;
+  if (user?.id && !message.senderUserId) {
+    const name = String(message.senderName || '').toLowerCase();
+    const record = findUserById(user.id);
+    if (name && record?.username && name === record.username.toLowerCase()) return true;
+    if (name && record?.displayName && name === record.displayName.toLowerCase()) return true;
+  }
+  if (!user?.id && !message.senderUserId && actorId && message.senderId === actorId) return true;
+  return false;
+}
+
+function dropPin(roomName, messageId) {
+  const room = rooms[roomName];
+  if (!room) return;
+  const index = room.pinned.findIndex((item) => item.id === messageId);
+  if (index < 0) return;
+  room.pinned.splice(index, 1);
+  io.to(roomName).emit('pinned', room.pinned);
+}
+
+function broadcastMessageView(roomName, message) {
+  const room = rooms[roomName];
+  if (!room) return;
+  for (const client of io.sockets.sockets.values()) {
+    if (client.data?.room !== roomName || !client.data.chatActive) continue;
+    const view = projectMessage(message, viewerCanManageMessages(room, client.user));
+    if (!view) continue;
+    if (view.hidden || view.purged) client.emit('messageRemoved', { id: message.id });
+    else client.emit('messageUpdated', view);
+  }
+}
+
+function applyMessageAction({ roomName, messageId, action, user, actorId }) {
+  const room = rooms[roomName];
+  if (!room) return { status: 404, error: 'Room not found.' };
+  const index = room.messages.findIndex((msg) => msg.id === messageId);
+  if (index < 0) return { status: 404, error: 'Message not found.' };
+  const message = room.messages[index];
+  const canManage = viewerCanManageMessages(room, user);
+
+  if (action === 'retract') {
+    if (!isMessageAuthor(message, user, actorId)) {
+      return { status: 403, error: 'You can only delete your own messages.' };
+    }
+    if (message.purged) return { status: 404, error: 'Message not found.' };
+    if (!message.deletedByUser) {
+      message.deletedByUser = true;
+      message.deletedAt = Date.now();
+      message.adminKept = false;
+      message.updatedAt = message.deletedAt;
+      insertRoomMessage(roomName, message);
+      dropPin(roomName, message.id);
+    }
+    broadcastMessageView(roomName, message);
+    return {
+      status: 200,
+      event: 'message.retracted',
+      message: projectMessage(message, canManage),
+    };
+  }
+
+  if (action === 'keep') {
+    if (!canManage) return { status: 403, error: 'Missing permission: Manage Messages.' };
+    if (!message.deletedByUser) return { status: 400, error: 'This message is not waiting for a decision.' };
+    message.adminKept = true;
+    message.updatedAt = Date.now();
+    insertRoomMessage(roomName, message);
+    broadcastMessageView(roomName, message);
+    return {
+      status: 200,
+      event: 'message.kept',
+      message: projectMessage(message, true),
+    };
+  }
+
+  if (action === 'purge') {
+    if (!canManage) return { status: 403, error: 'Missing permission: Manage Messages.' };
+    if (!message.deletedByUser) return { status: 400, error: 'The author has to delete the message first.' };
+    const tombstone = {
+      id: message.id,
+      purged: true,
+      ts: message.ts,
+      room: roomName,
+      updatedAt: Date.now(),
+    };
+    room.messages.splice(index, 1);
+    insertRoomMessage(roomName, tombstone);
+    dropPin(roomName, message.id);
+    broadcastMessageView(roomName, tombstone);
+    return {
+      status: 200,
+      event: 'message.purged',
+      message: projectMessage(tombstone, canManage),
+    };
+  }
+
+  return { status: 400, error: 'Unknown action.' };
+}
+
 function sendHistory(roomName, socket) {
   const room = rooms[roomName];
   if (!room) return;
 
+  sendRoomRoles(roomName, socket);
+
   const guest = isGuestSocket(socket);
   const config = cfg();
+  const canManage = viewerCanManageMessages(room, socket.user);
 
   if (socket.user?.id && !userHasPermission(room, socket.user.id, 'READ_MESSAGE_HISTORY')) {
     socket.emit('history', { messages: [], decoys: [], isGuest: false, hiddenCount: 0 });
   } else if (guest) {
     const visible = Math.max(0, config.guestHistoryVisible);
-    const messages = room.messages.slice(-visible);
+    const all = visibleMessages(room.messages, false);
+    const messages = all.slice(-visible);
     const decoys = buildDecoyMessages(config.guestDecoyCount, roomName);
-    const hiddenCount = Math.max(0, room.messages.length - visible);
+    const hiddenCount = Math.max(0, all.length - visible);
     socket.emit('history', { messages, decoys, isGuest: true, hiddenCount });
   } else {
     socket.emit('history', {
-      messages: room.messages,
+      messages: visibleMessages(room.messages, canManage),
       decoys: [],
       isGuest: false,
       hiddenCount: 0,
@@ -979,7 +1095,6 @@ function sendHistory(roomName, socket) {
     socket.emit('pinned', room.pinned);
     socket.emit('activityHistory', readActivity({ room: roomName, limit: 60 }));
   }
-  sendRoomRoles(roomName, socket);
 }
 
 function canJoinRoom(roomName, socket) {
@@ -1522,6 +1637,24 @@ io.on('connection', (socket) => {
     broadcastRoomLists();
   });
 
+  socket.on('deleteMessage', ({ room, messageId, action }) => {
+    if (!ensureChatGate(socket)) return;
+    const roomName = sanitizeRoomName(room) || socket.data.room;
+    if (!rooms[roomName] || socket.data.room !== roomName) return;
+    const result = applyMessageAction({
+      roomName,
+      messageId: String(messageId || ''),
+      action: String(action || ''),
+      user: socket.user,
+      actorId: socket.id,
+    });
+    if (result.error) {
+      socket.emit('messageActionError', { reason: result.error });
+      return;
+    }
+    if (result.event) activityLog(result.event, socket, { room: roomName, messageId });
+  });
+
   socket.on('pinMessage', ({ room, messageId }) => {
     if (!ensureChatGate(socket)) return;
     const roomData = rooms[room];
@@ -1532,7 +1665,7 @@ io.on('connection', (socket) => {
     }
 
     const message = roomData.messages.find((msg) => msg.id === messageId);
-    if (!message) return;
+    if (!message || message.deletedByUser || message.purged) return;
 
     const pinnedIndex = roomData.pinned.findIndex((item) => item.id === messageId);
     if (pinnedIndex >= 0) {
@@ -1752,7 +1885,7 @@ async function bootstrap() {
     rooms[roomName] = createRoom(roomName, 'public');
     persistRoomMeta(roomName, rooms[roomName]);
     const stored = listRoomMessages(roomName, { since: 0, limit: cfg().maxMessagesPerRoom });
-    if (stored.length) rooms[roomName].messages = stored;
+    if (stored.length) rooms[roomName].messages = stored.filter((message) => !message.purged);
   }
   startServer();
 }

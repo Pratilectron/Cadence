@@ -41,6 +41,7 @@ export function createHttpChat() {
       if (event === 'requestRoomList') return api.refreshMeta();
       if (event === 'joinRoom') return api.joinRoom(data);
       if (event === 'message') return api.sendMessage(data);
+      if (event === 'deleteMessage') return api.deleteMessage(data);
       if (event === 'restoreSession') return Promise.resolve();
       if (event === 'requestHistory') return api.refreshHistory(data?.room);
       return undefined;
@@ -87,6 +88,27 @@ export function createHttpChat() {
         return;
       }
       if (data.message) deliverMessage(data.message);
+    },
+    async deleteMessage(msg) {
+      const res = await fetch('/api/chat/message/action', {
+        ...fetchOpts,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({
+          ...msg,
+          room: msg?.room || currentRoom,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        fire('messageActionError', { reason: data.error || 'Could not update that message.' });
+        return;
+      }
+      if (data.message?.hidden || data.message?.purged) {
+        fire('messageRemoved', { id: data.message.id });
+        return;
+      }
+      if (data.message) fire('messageUpdated', data.message);
     },
     async refreshMeta() {
       await pollOnce(true);
@@ -198,8 +220,18 @@ export function createHttpChat() {
       }
       api.connected = true;
       for (const message of data.messages || []) {
+        if (message?.hidden || message?.purged) {
+          if (message.id) seenMessageIds.add(message.id);
+          fire('messageRemoved', { id: message.id });
+          continue;
+        }
+        if (message?.id && seenMessageIds.has(message.id)) {
+          fire('messageUpdated', message);
+          continue;
+        }
         deliverMessage(message);
       }
+      if (Number(data.cursor) > cursor) cursor = Number(data.cursor);
       fireIfChanged('roomlist', 'roomlist', data.roomlist);
       fireIfChanged('userlist', 'userlist', data.userlist);
       fireIfChanged('pinned', 'pinned', data.pinned);

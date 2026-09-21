@@ -526,6 +526,43 @@ import {
     return msg.senderId === state.socket?.id;
   }
 
+  function canManageMessages() {
+    return Boolean(state.user?.isSuperAdmin) || can(state, 'MANAGE_MESSAGES');
+  }
+
+  function syncHistoryMessage(payload) {
+    if (!state.lastHistory) {
+      state.lastHistory = { messages: [], decoys: [], isGuest: false, hiddenCount: 0 };
+    }
+    const list = state.lastHistory.messages || (state.lastHistory.messages = []);
+    const index = list.findIndex((msg) => msg.id === payload.id);
+    if (payload.hidden || payload.purged) {
+      if (index >= 0) list.splice(index, 1);
+      return;
+    }
+    if (index >= 0) list[index] = payload;
+    else list.push(payload);
+  }
+
+  function removeMessage(id) {
+    if (!id) return;
+    state.messageIds.delete(id);
+    elements.messages.querySelector(`.message[data-id="${CSS.escape(id)}"]`)?.remove();
+    syncHistoryMessage({ id, hidden: true });
+  }
+
+  function applyMessageChange(payload) {
+    if (!payload?.id) return;
+    if (payload.hidden || payload.purged || (payload.deletedByUser && !canManageMessages())) {
+      removeMessage(payload.id);
+      return;
+    }
+    syncHistoryMessage(payload);
+    state.messageIds.delete(payload.id);
+    elements.messages.querySelector(`.message[data-id="${CSS.escape(payload.id)}"]`)?.remove();
+    appendMessage(payload, isOwnMessage(payload) ? 'me' : 'them', false);
+  }
+
   function syncGuestDisplayName() {
     if (state.user?.id || !state.socket?.connected) return;
     const name = sanitizeGuestNameInput(readGuestName() || randomGuestName());
@@ -1113,6 +1150,31 @@ import {
     if (state.lastHistory) renderHistory(state.lastHistory);
   }
 
+  function messageAction(label, action, messageId, confirmFirst = false) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'msg-action';
+    button.textContent = label;
+    button.addEventListener('click', () => {
+      if (confirmFirst && button.dataset.armed !== '1') {
+        button.dataset.armed = '1';
+        button.textContent = 'Confirm';
+        window.setTimeout(() => {
+          if (!button.isConnected || button.dataset.armed !== '1') return;
+          button.dataset.armed = '';
+          button.textContent = label;
+        }, 2500);
+        return;
+      }
+      state.socket?.emit('deleteMessage', {
+        room: state.activeRoom,
+        messageId,
+        action,
+      });
+    });
+    return button;
+  }
+
   function appendMessage(payload, type = 'them', shouldAnimate = true) {
     if (payload.decoy) {
       appendDecoyMessage(payload);
@@ -1121,9 +1183,14 @@ import {
     if (state.messageIds.has(payload.id)) return;
     state.messageIds.add(payload.id);
 
+    if (payload.hidden || payload.purged || (payload.deletedByUser && !canManageMessages())) {
+      removeMessage(payload.id);
+      return;
+    }
+
     const own = type === 'me' || isOwnMessage(payload);
     const message = document.createElement('article');
-    message.className = `message${own ? ' me' : ' them'}${shouldAnimate ? ' message-enter' : ''}`;
+    message.className = `message${own ? ' me' : ' them'}${payload.deletedByUser ? ' message-retracted' : ''}${shouldAnimate ? ' message-enter' : ''}`;
     message.dataset.id = payload.id || '';
     message.dataset.userId = payload.senderUserId || '';
     if (payload.senderAvatar) state.messageAvatars[payload.id] = payload.senderAvatar;
@@ -1155,13 +1222,30 @@ import {
     pinButton.type = 'button';
     pinButton.className = 'pin-button';
     pinButton.textContent = 'Pin';
-    pinButton.hidden = !can(state, 'MANAGE_MESSAGES') || state.isGuest;
+    pinButton.hidden = !can(state, 'MANAGE_MESSAGES') || state.isGuest || payload.deletedByUser;
     pinButton.addEventListener('click', () => {
       if (state.socket?.connected && state.user) {
         state.socket.emit('pinMessage', { room: state.activeRoom, messageId: payload.id });
       }
     });
     meta.append(sender, time, pinButton);
+    if (own && !payload.deletedByUser) {
+      meta.appendChild(messageAction('Delete', 'retract', payload.id, true));
+    }
+    if (payload.deletedByUser && canManageMessages()) {
+      const note = document.createElement('p');
+      note.className = 'message-deleted-note';
+      note.textContent = payload.adminKept
+        ? 'Deleted by the user. Kept for you.'
+        : 'Deleted by the user. Only you can see this.';
+      bubble.appendChild(note);
+      if (!payload.adminKept) {
+        meta.append(
+          messageAction('Keep for me', 'keep', payload.id, false),
+          messageAction('Delete for everyone', 'purge', payload.id, true),
+        );
+      }
+    }
     bubble.append(body, meta);
     message.append(avatar, bubble);
     elements.messages.appendChild(message);
@@ -1273,9 +1357,14 @@ import {
   }
 
   function applyRoomRoles(payload) {
+    const couldManage = canManageMessages();
+    const hadHistory = Boolean(state.lastHistory);
     state.roomRoles = payload;
     state.myPermissions = payload.myPermissions || {};
     renderRolesPanel(elements.rolesPanel, state, state.socket, state.activeRoom);
+    if (hadHistory && !couldManage && canManageMessages()) {
+      state.socket?.emit('requestHistory', { room: state.activeRoom });
+    }
   }
 
   async function handleFiles(fileList, tag = 'file') {
@@ -1377,6 +1466,15 @@ import {
     });
     socket.on('message', (msg) => {
       handleIncomingMessage(msg);
+    });
+    socket.on('messageUpdated', (msg) => {
+      applyMessageChange(msg);
+    });
+    socket.on('messageRemoved', ({ id } = {}) => {
+      removeMessage(id);
+    });
+    socket.on('messageActionError', (payload) => {
+      showToast(payload?.reason || 'Could not update that message.', 'error');
     });
     socket.on('pinned', renderPinnedList);
     socket.on('roomJoined', ({ roomName, type }) => handleRoomChange(roomName, type));

@@ -770,7 +770,8 @@ button {
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-.pin-button {
+.pin-button,
+.msg-action {
   font-family: var(--display);
   font-size: 0.62rem;
   letter-spacing: 0.1em;
@@ -780,9 +781,23 @@ button {
   border-bottom: 1px solid transparent;
 }
 
-.pin-button:hover {
+.pin-button:hover,
+.msg-action:hover {
   color: var(--gold);
   border-bottom-color: var(--gold);
+}
+
+.message-deleted-note {
+  margin: 0 0 4px;
+  font-family: var(--display);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  line-height: 1.35;
+  color: var(--gold);
+}
+
+.message-retracted .message-bubble {
+  opacity: 0.82;
 }
 
 .compose-zone {
