@@ -150,9 +150,10 @@ import {
   }
 
   function staggerIn(container, selector) {
-    if (!motionOk || !container) return;
+    if (!motionOk || !container || container.dataset.settled === '1') return;
     const items = container.querySelectorAll(selector);
     if (!items.length) return;
+    container.dataset.settled = '1';
     animate(items, { opacity: [0, 1], y: [14, 0] }, { delay: stagger(0.04), duration: 0.45, easing: spring() });
   }
 
@@ -1187,6 +1188,14 @@ import {
     });
 
     socket.on('authSuccess', handleAuthSuccess);
+    socket.on('restoredSession', (data) => {
+      state.isGuest = false;
+      state.user = { id: data.id, username: data.username, isSuperAdmin: data.isSuperAdmin };
+      state.sessionToken = data.token;
+      updateUserChip(data.displayName || data.username);
+      updateAuthChrome();
+      updateInviteButton();
+    });
     socket.on('loggedOut', handleLoggedOut);
     socket.on('sessionExpired', () => {
       showToast('Session expired — sign in again.', 'error');

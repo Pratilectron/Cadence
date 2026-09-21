@@ -395,7 +395,7 @@ function serveFile(res, filePath, cacheHtml = false) {
   res.writeHead(200, {
     ...SECURITY_HEADERS,
     'Content-Type': type,
-    'Cache-Control': (ext === '.html' || cacheHtml) ? 'no-cache' : 'public, max-age=86400',
+    'Cache-Control': (ext === '.html' || ext === '.js' || ext === '.css' || cacheHtml) ? 'no-cache' : 'public, max-age=86400',
   });
   res.end(body);
 }

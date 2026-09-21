@@ -11,12 +11,12 @@ function authHeaders() {
 
 export function createHttpChat() {
   const handlers = new Map();
-  let pollTimer = null;
   let cursor = 0;
   let currentRoom = null;
   let closed = false;
-  let metaCounter = 0;
+  let polling = false;
   const seenMessageIds = new Set();
+  const metaSnap = { roomlist: '', userlist: '', pinned: '' };
 
   const api = {
     connected: false,
@@ -48,8 +48,6 @@ export function createHttpChat() {
     disconnect() {
       closed = true;
       api.connected = false;
-      if (pollTimer) window.clearInterval(pollTimer);
-      pollTimer = null;
     },
     async joinRoom(roomName) {
       const res = await fetch('/api/chat/join', {
@@ -113,14 +111,26 @@ export function createHttpChat() {
       rememberHistory(data.history?.messages);
       if (!cursor) cursor = Date.now();
       api.connected = true;
+      const saved = readSession();
+      if (saved?.token) {
+        const restored = await fetch('/api/auth/restore', {
+          ...fetchOpts,
+          method: 'POST',
+          headers: { Authorization: `Bearer ${saved.token}` },
+        });
+        const auth = await restored.json().catch(() => ({}));
+        if (restored.ok) fire('restoredSession', auth);
+        else if (restored.status === 401) fire('sessionExpired');
+      }
       fire('connect');
       fire('history', data.history);
       fire('pinned', data.pinned || []);
       fire('roomlist', data.roomlist || []);
       fire('userlist', data.userlist || []);
       if (data.activityHistory) fire('activityHistory', data.activityHistory);
-      if (!pollTimer) {
-        pollTimer = window.setInterval(() => pollOnce(false), 2500);
+      if (!polling) {
+        polling = true;
+        pollLoop();
       }
     },
   };
@@ -147,14 +157,29 @@ export function createHttpChat() {
     }
   }
 
+  function fireIfChanged(key, event, value) {
+    if (value == null) return;
+    const snap = JSON.stringify(value);
+    if (snap === metaSnap[key]) return;
+    metaSnap[key] = snap;
+    fire(event, value);
+  }
+
+  async function pollLoop() {
+    while (!closed) {
+      await pollOnce(false);
+      if (closed) break;
+    }
+    polling = false;
+  }
+
   async function pollOnce(forceMeta) {
     if (closed || !currentRoom) return;
-    const includeMeta = forceMeta || metaCounter % 5 === 0;
-    metaCounter += 1;
     const qs = new URLSearchParams({
       since: String(cursor || 0),
       room: currentRoom,
-      ...(includeMeta ? { meta: '1' } : {}),
+      wait: '1',
+      meta: '1',
     });
     try {
       const res = await fetch(`/api/chat/poll?${qs}`, {
@@ -165,18 +190,20 @@ export function createHttpChat() {
       if (!res.ok) {
         api.connected = false;
         fire('connect_error', new Error(data.error || 'Poll failed'));
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
         return;
       }
       api.connected = true;
       for (const message of data.messages || []) {
         deliverMessage(message);
       }
-      if (data.roomlist) fire('roomlist', data.roomlist);
-      if (data.userlist) fire('userlist', data.userlist);
-      if (data.pinned) fire('pinned', data.pinned);
+      fireIfChanged('roomlist', 'roomlist', data.roomlist);
+      fireIfChanged('userlist', 'userlist', data.userlist);
+      fireIfChanged('pinned', 'pinned', data.pinned);
     } catch (err) {
       api.connected = false;
       fire('connect_error', err);
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
     }
   }
 
