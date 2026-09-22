@@ -17,6 +17,7 @@ let appConfig = {
 let onGrantedCallback = null;
 let gateDialog = null;
 let elements = null;
+let allowDismiss = false;
 
 function $(id) {
   return document.getElementById(id);
@@ -40,6 +41,7 @@ function bindElements() {
     guestNameInput: $('gate-guest-name-input'),
     guestRandomName: $('gate-guest-random-name'),
     guestContinue: $('gate-guest-continue'),
+    closeButton: $('gate-access-close'),
   };
   gateDialog = elements.dialog;
 }
@@ -68,6 +70,7 @@ function setAuthMode(mode) {
   elements.authSubmit.textContent = isLogin ? 'Sign in' : 'Create account';
   elements.authModeButton.textContent = isLogin ? 'Need an account? Create one' : 'Already have an account? Sign in';
   elements.authPassword.autocomplete = isLogin ? 'current-password' : 'new-password';
+  elements.authPassword.minLength = isLogin ? 4 : 8;
   elements.gateCopy.textContent = isLogin
     ? 'Private rooms, pins, and uploads — or browse public rooms as a guest.'
     : 'Pick a username and password to join Cadence.';
@@ -136,6 +139,15 @@ function showGateModal() {
 function hideGateModal() {
   document.body.classList.remove('gate-locked');
   if (gateDialog?.open) gateDialog.close();
+}
+
+function syncDismissControl() {
+  if (elements?.closeButton) elements.closeButton.hidden = !allowDismiss;
+}
+
+export function dismissAccessGate() {
+  if (!allowDismiss) return;
+  hideGateModal();
 }
 
 async function completeGranted(mode) {
@@ -247,8 +259,14 @@ function bindGateEvents() {
 
   elements.guestContinue.addEventListener('click', continueAsGuest);
 
+  elements.closeButton?.addEventListener('click', () => dismissAccessGate());
+
   gateDialog.addEventListener('cancel', (event) => {
-    event.preventDefault();
+    if (!allowDismiss) event.preventDefault();
+  });
+
+  gateDialog.addEventListener('close', () => {
+    if (allowDismiss) document.body.classList.remove('gate-locked');
   });
 }
 
@@ -283,9 +301,11 @@ function primeAuthForm() {
 
 export async function showAccessGate(detail = {}) {
   bindElements();
+  allowDismiss = Boolean(detail.dismissable);
   await loadPublicConfig();
   primeAuthForm();
-  if (detail.signedOut) setStatus('Signed out.');
+  syncDismissControl();
+  setStatus(detail.signedOut ? 'Signed out.' : '');
   if (detail.locked) {
     elements.authError.textContent = 'Your account is temporarily suspended. Try again later.';
   }
@@ -298,6 +318,8 @@ export async function showAccessGate(detail = {}) {
 
 export async function initAccessGate({ onGranted } = {}) {
   bindElements();
+  allowDismiss = false;
+  syncDismissControl();
   onGrantedCallback = onGranted;
   readQueryMessage();
   await loadPublicConfig();

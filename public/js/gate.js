@@ -55,6 +55,7 @@ function setAuthMode(mode) {
   elements.authSubmit.textContent = isLogin ? 'Sign in' : 'Register';
   elements.authModeButton.textContent = isLogin ? 'Create account' : 'Sign in';
   elements.authPassword.autocomplete = isLogin ? 'current-password' : 'new-password';
+  elements.authPassword.minLength = isLogin ? 4 : 8;
   elements.authError.textContent = '';
 }
 

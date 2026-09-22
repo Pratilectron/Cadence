@@ -274,6 +274,7 @@
 
   <dialog class="gate gate-access-dialog" id="access-gate-dialog" aria-labelledby="gate-auth-title">
     <div class="gate-sheet gate-access-sheet">
+      <button type="button" class="link-btn gate-close" id="gate-access-close" hidden>✕</button>
       <header class="gate-access-brand">
         <img src="/logo.svg" alt="" width="40" height="40" />
         <div>
@@ -293,7 +294,7 @@
         </label>
         <label>
           <span>Password</span>
-          <input id="gate-auth-password" type="password" minlength="8" autocomplete="current-password" required />
+          <input id="gate-auth-password" type="password" minlength="4" autocomplete="current-password" required />
         </label>
         <button type="submit" class="pill-btn pill-accent pill-wide" id="gate-auth-submit">Sign in</button>
         <p class="form-error" id="gate-auth-error" role="alert"></p>

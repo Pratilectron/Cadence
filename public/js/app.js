@@ -10,6 +10,7 @@ import {
   MODERATION_BLOCK_MESSAGE,
 } from './nsfw-guard.js';
 import {
+  dismissAccessGate,
   initAccessGate,
   showAccessGate,
 } from './access-gate.js';
@@ -1088,7 +1089,9 @@ import {
       <div class="guest-unlock-actions">
         <button type="button" class="pill-btn pill-accent guest-unlock-btn" data-action="signin">Sign in free</button>
       </div>`;
-    wrap.querySelector('[data-action="signin"]').addEventListener('click', () => showAccessGate());
+    wrap.querySelector('[data-action="signin"]').addEventListener('click', () => {
+      showAccessGate({ dismissable: true });
+    });
     return wrap;
   }
 
@@ -1515,6 +1518,15 @@ import {
     });
   }
 
+  function restartChatTransport() {
+    if (state.socket) {
+      state.socket.disconnect();
+      state.socket = null;
+    }
+    updateAuthChrome();
+    initChatTransport();
+  }
+
   async function initChatTransport() {
     if (state.chatTransport === 'http') {
       state.socket = createHttpChat();
@@ -1588,7 +1600,12 @@ import {
     elements.profileDialog.addEventListener('close', () => setProfileMode('self'));
     document.querySelectorAll('dialog.gate').forEach((dialog) => {
       dialog.addEventListener('click', (event) => {
-        if (event.target === dialog) hideModal(dialog);
+        if (event.target !== dialog) return;
+        if (dialog.id === 'access-gate-dialog') {
+          dismissAccessGate();
+          return;
+        }
+        hideModal(dialog);
       });
     });
     elements.moderationOk?.addEventListener('click', () => {
@@ -1629,32 +1646,19 @@ import {
       });
     });
 
-    elements.signinBtn?.addEventListener('click', async () => {
-      clearSession();
-      state.appStarted = false;
-      state.gateMode = null;
-      if (state.socket) {
-        state.socket.disconnect();
-        state.socket = null;
-      }
-      await clearGateAccess();
-      await showAccessGate();
+    elements.signinBtn?.addEventListener('click', () => {
+      if (!state.user) clearSession();
+      showAccessGate({ dismissable: true });
     });
     elements.guestSettingsClose?.addEventListener('click', () => hideModal(elements.guestSettingsDialog));
     elements.guestSettingsSave?.addEventListener('click', saveGuestSettings);
     elements.guestChatRandom?.addEventListener('click', () => {
       elements.guestChatName.value = randomGuestName();
     });
-    elements.guestSettingsSignin?.addEventListener('click', async () => {
-      clearSession();
-      state.appStarted = false;
-      if (state.socket) {
-        state.socket.disconnect();
-        state.socket = null;
-      }
-      await clearGateAccess();
+    elements.guestSettingsSignin?.addEventListener('click', () => {
+      if (!state.user) clearSession();
       hideModal(elements.guestSettingsDialog);
-      await showAccessGate();
+      showAccessGate({ dismissable: true });
     });
     elements.guestSettingsDialog?.addEventListener('cancel', (e) => {
       e.preventDefault();
@@ -1888,6 +1892,10 @@ import {
     const gateResult = await initAccessGate({
       onGranted(mode) {
         state.gateMode = mode;
+        if (state.appStarted && mode === 'user') {
+          restartChatTransport();
+          return;
+        }
         startChatApp();
       },
     });
