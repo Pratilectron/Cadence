@@ -49,9 +49,6 @@ import { paintAvatar, readGuestAvatar, writeGuestAvatar } from './avatars.js';
 import { bindAvatarStudio } from './avatar-studio.js';
 import {
   initUploadUi,
-  showUploadProgress,
-  updateUploadProgress,
-  hideUploadProgress,
   uploadWithProgress,
 } from './upload-ui.js';
 
@@ -784,23 +781,19 @@ import {
     mobilePanels?.setPanel?.('chat');
   }
 
-  async function uploadFile(file, tag = 'file') {
+  async function uploadFile(file, tag = 'file', { onProgress } = {}) {
     if (!state.sessionToken) {
       showToast('Sign in to upload files', 'error');
       return null;
     }
 
-    showUploadProgress({
-      fileName: file.name,
-      stage: file.type.startsWith('video/') ? 'checking' : 'uploading',
-      progress: 0,
-      detail: file.type.startsWith('video/') ? 'Scanning video frames…' : 'Starting upload…',
-    });
+    const report = (ratio, detail) => onProgress?.(ratio, detail);
+
+    report(0, file.type.startsWith('video/') ? 'Checking…' : 'Starting…');
 
     if (file.type.startsWith('video/')) {
       const videoCheck = await checkVideoFile(file);
       if (!videoCheck.ok) {
-        hideUploadProgress(0);
         elements.fileInput.value = '';
         return null;
       }
@@ -808,12 +801,7 @@ import {
 
     const form = new FormData();
     form.append('file', file);
-
-    updateUploadProgress({
-      stage: 'uploading',
-      progress: 0,
-      detail: 'Uploading… 0%',
-    });
+    report(0, '0%');
 
     try {
       const data = await uploadWithProgress(
@@ -822,30 +810,16 @@ import {
         { Authorization: `Bearer ${state.sessionToken}` },
         {
           onUploadProgress(ratio, verifying) {
-            if (verifying) {
-              updateUploadProgress({
-                stage: 'verifying',
-                progress: ratio,
-                detail: 'Checking content policy…',
-              });
-              return;
-            }
-            updateUploadProgress({
-              stage: 'uploading',
-              progress: ratio,
-              detail: `Uploading… ${Math.round(ratio * 100)}%`,
-            });
+            report(ratio, verifying ? 'Checking…' : `${Math.round(ratio * 100)}%`);
           },
         },
       );
 
-      updateUploadProgress({ stage: 'finishing', progress: 1, detail: 'Done' });
+      report(1, 'Sending…');
       await refreshStorage();
       if (tag === 'emoji' || tag === 'gif') await refreshCustomEmojis();
-      hideUploadProgress();
       return data.file;
     } catch (err) {
-      hideUploadProgress(0);
       const msg = err.message || err.error || 'Upload failed';
       if (err.lockedOut || err.strikes) {
         notifyModerationBlock({ message: msg, ...err });
@@ -861,12 +835,13 @@ import {
   }
 
   function sendFileMessage(file, caption = '') {
-    if (!state.socket?.connected || !file) return;
+    if (!state.socket?.connected || !file) return false;
     state.socket.emit('message', {
       type: file.kind === 'gif' ? 'gif' : file.kind === 'emoji' ? 'emoji' : 'file',
       fileId: file.id,
       text: caption,
     });
+    return true;
   }
 
   function renderActivityLog(logs) {
@@ -1145,6 +1120,8 @@ import {
       if (elements.adminLink) elements.adminLink.hidden = true;
     }
 
+    settlePendingFromHistory(data.messages);
+    reattachPendingUploads();
     staggerIn(elements.messages, '.message:not(.decoy-preview)');
     elements.messages.scrollTop = elements.messages.scrollHeight;
   }
@@ -1292,6 +1269,7 @@ import {
       });
       return;
     }
+    if (own && msg.file?.id) releasePendingUpload(msg.file.id);
     appendMessage(msg, own ? 'me' : 'them');
     if (!own) {
       playReceiveSound(state.preferences.soundEnabled);
@@ -1370,16 +1348,167 @@ import {
     }
   }
 
-  async function handleFiles(fileList, tag = 'file') {
+  const pendingUploads = new Map();
+
+  function appendPendingUpload(file, caption) {
+    const localId = crypto.randomUUID();
+    const message = document.createElement('article');
+    message.className = 'message me message-pending message-enter';
+    message.dataset.pendingId = localId;
+
+    const avatar = document.createElement('span');
+    avatar.className = 'msg-avatar';
+    paintAvatar(avatar, currentSelfAvatar(), 'You');
+
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble';
+    const body = document.createElement('div');
+    body.className = 'message-body';
+
+    if (caption) {
+      const text = document.createElement('div');
+      text.textContent = caption;
+      body.appendChild(text);
+    }
+
+    const previewUrl = file.type.startsWith('image/') || file.type.startsWith('video/')
+      ? URL.createObjectURL(file)
+      : '';
+    if (previewUrl && file.type.startsWith('image/')) {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg-attachment';
+      const img = document.createElement('img');
+      img.src = previewUrl;
+      img.alt = file.name || 'Upload';
+      wrap.appendChild(img);
+      body.appendChild(wrap);
+    } else if (previewUrl) {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg-attachment';
+      const video = document.createElement('video');
+      video.src = previewUrl;
+      video.muted = true;
+      video.playsInline = true;
+      wrap.appendChild(video);
+      body.appendChild(wrap);
+    } else {
+      const name = document.createElement('p');
+      name.className = 'pending-file-name';
+      name.textContent = file.name || 'File';
+      body.appendChild(name);
+    }
+
+    const track = document.createElement('div');
+    track.className = 'upload-progress';
+    track.setAttribute('role', 'progressbar');
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', '100');
+    track.setAttribute('aria-valuenow', '0');
+    track.setAttribute('aria-label', `Uploading ${file.name || 'file'}`);
+    const fill = document.createElement('div');
+    fill.className = 'upload-progress-bar';
+    track.appendChild(fill);
+
+    const detail = document.createElement('p');
+    detail.className = 'upload-detail';
+    detail.textContent = 'Starting…';
+
+    const meta = document.createElement('div');
+    meta.className = 'message-meta';
+    const sender = document.createElement('span');
+    sender.className = 'message-sender';
+    sender.textContent = 'You';
+    const size = document.createElement('span');
+    size.textContent = formatBytes(file.size || 0);
+    meta.append(sender, size);
+
+    bubble.append(body, track, detail, meta);
+    message.append(avatar, bubble);
+    elements.messages.appendChild(message);
+    elements.messages.scrollTop = elements.messages.scrollHeight;
+
+    const entry = {
+      localId,
+      room: state.activeRoom,
+      node: message,
+      fileId: null,
+      previewUrl,
+      setProgress(ratio, text) {
+        const pct = Math.max(0, Math.min(100, Math.round((ratio || 0) * 100)));
+        fill.style.width = `${pct}%`;
+        track.setAttribute('aria-valuenow', String(pct));
+        if (text) detail.textContent = text;
+      },
+      bindFile(id) {
+        entry.fileId = id;
+      },
+      remove() {
+        if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+        message.remove();
+        pendingUploads.delete(localId);
+      },
+    };
+    pendingUploads.set(localId, entry);
+    return entry;
+  }
+
+  function releasePendingUpload(fileId) {
+    if (!fileId) return;
+    for (const entry of pendingUploads.values()) {
+      if (entry.fileId === fileId) entry.remove();
+    }
+  }
+
+  function settlePendingFromHistory(messages) {
+    const ids = new Set((messages || []).map((msg) => msg.file?.id).filter(Boolean));
+    for (const entry of pendingUploads.values()) {
+      if (entry.fileId && ids.has(entry.fileId)) entry.remove();
+    }
+  }
+
+  function reattachPendingUploads() {
+    for (const entry of pendingUploads.values()) {
+      if (entry.room === state.activeRoom) elements.messages.appendChild(entry.node);
+    }
+  }
+
+  function handleFiles(fileList, tag = 'file') {
     if (!can(state, 'ATTACH_FILES')) {
       showToast('Missing permission: Attach Files', 'error');
       return;
     }
-    for (const file of fileList) {
-      const uploaded = await uploadFile(file, tag);
-      if (uploaded) sendFileMessage(uploaded, elements.chatInput.value.trim());
-    }
+    const caption = elements.chatInput.value.trim();
     elements.chatInput.value = '';
+    let captionUsed = false;
+    for (const file of fileList) {
+      const note = captionUsed ? '' : caption;
+      captionUsed = true;
+      startChatUpload(file, tag, note);
+    }
+  }
+
+  function startChatUpload(file, tag, caption) {
+    if (!state.sessionToken) {
+      showToast('Sign in to upload files', 'error');
+      return;
+    }
+    const pending = appendPendingUpload(file, caption);
+    uploadFile(file, tag, {
+      onProgress(ratio, detail) {
+        pending.setProgress(ratio, detail);
+      },
+    }).then((uploaded) => {
+      if (!uploaded) {
+        pending.remove();
+        return;
+      }
+      pending.bindFile(uploaded.id);
+      pending.setProgress(1, 'Sending…');
+      if (!sendFileMessage(uploaded, caption)) {
+        pending.remove();
+        showToast('Could not send that file', 'error');
+      }
+    });
   }
 
   function buildSocketAuth() {
@@ -1693,8 +1822,7 @@ import {
       if (!state.sessionToken) return showToast('Sign in to record', 'error');
       if (!can(state, 'ATTACH_FILES')) return showToast('Missing permission: Attach Files', 'error');
       await openRecorder(async (file) => {
-        const uploaded = await uploadFile(file, 'file');
-        if (uploaded) sendFileMessage(uploaded, 'Screen recording');
+        startChatUpload(file, 'file', 'Screen recording');
       });
     });
     elements.fileInput.addEventListener('change', () => {
