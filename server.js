@@ -1,3 +1,16 @@
+if (process.env.NODE_ENV === 'test' && process.env.CADENCE_DETACHED !== '1' && process.platform !== 'win32') {
+  const { spawn } = require('child_process');
+  const { openSync } = require('fs');
+  const logFd = openSync('ci-server.log', 'a');
+  const child = spawn(process.execPath, process.argv.slice(1), {
+    detached: true,
+    stdio: ['ignore', logFd, logFd],
+    env: { ...process.env, CADENCE_DETACHED: '1' },
+  });
+  child.unref();
+  process.exit(0);
+}
+
 require('./lib/module-paths');
 const { checkDependencies } = require('./lib/ensure-deps');
 checkDependencies();
